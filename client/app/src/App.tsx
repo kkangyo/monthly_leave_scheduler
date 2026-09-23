@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import Modal from "react-modal";
 import { useAgent } from "./hooks/useAgentinfo";
 import "./App.css";
 import "./styles.css";
@@ -6,7 +7,6 @@ import "./styles.css";
 import MyCalendar from "./MyCalendar";
 import { EventInput, EventDropArg, EventClickArg, EventContentArg } from "@fullcalendar/core";
 import { DateClickArg } from "@fullcalendar/interaction";
-import { DateObject } from "react-multi-date-picker"; // DateObject를 임포트
 import Table from "./ReactTable";
 import { KOREAN_HOLIDAYS } from "./koreanHolidays";
 
@@ -15,9 +15,8 @@ export interface Agentinfo {
   job_level: string;
 }
 
-// 달력 이벤트 색상: 기본은 전원 흰색, 클릭으로 선택된 인원만 강조색
+// 달력 이벤트 색상: 기본은 전원 흰색(테두리 없음), 클릭으로 선택된 인원만 강조색
 const DEFAULT_EVENT_COLOR = "#ffffff";
-const DEFAULT_EVENT_BORDER = "#c9c9c9";
 const SELECTED_EVENT_COLOR = "#1a73e8";
 
 function App() {
@@ -32,8 +31,6 @@ function App() {
     leaveList,
     annualLeaveList,
     mandatoryWorkList,
-    holiday,
-    alternativeholiday,
     currentMonth,
     monthlySchedule,
     confirmSchedule,
@@ -54,6 +51,8 @@ function App() {
   const [addSelection, setAddSelection] = useState<string>("");
   // 달력에서 클릭으로 선택한 인원 — 선택되면 그 인원의 휴무 이벤트만 강조색으로 표시
   const [selectedEmployee, setSelectedEmployee] = useState<string | null>(null);
+  // 설정 창(직원/필수 조건/보조직무 표) 표시 여부
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (agentList) {
@@ -109,19 +108,11 @@ function App() {
     const leaveTargetOf = (day: number) => Math.max(0, agentData.length - workTargetOf(day));
     const maxDailyLeave = Math.max(1, agentData.length - weekdayWorkers); // fillSparseDays 레벨 상한
 
-    //#################### 0-2. 전체 휴무 / 대체 휴무 (대상 월의 '일' 숫자만)
+    //#################### 0-2. 전체 휴무 / 대체 휴무 (대상 월의 '일' 숫자만, 한국 공휴일 자동 반영으로만 채워짐)
     //  - offday      : 매장 전체 휴무 (근무/휴무 개념 없음, 의무 휴무 카운트 미포함)
     //  - alteroffday : 대체 휴무 1일 크레딧 (평일이면 근무 여부 무관 전원, 주말이면 그 날 근무자만)
     const offday: number[] = [];
     const alteroffday: number[] = [];
-    holiday.forEach((d: DateObject) => {
-      const jd = d.toDate();
-      if (jd.getFullYear() === targetYear && jd.getMonth() + 1 === targetMonth) offday.push(jd.getDate());
-    });
-    alternativeholiday.forEach((d: DateObject) => {
-      const jd = d.toDate();
-      if (jd.getFullYear() === targetYear && jd.getMonth() + 1 === targetMonth) alteroffday.push(jd.getDate());
-    });
     // 한국 공휴일 자동 반영: 설날·추석 '당일' → 전체 휴무 / 그 외 공휴일 → 근무 + 대체휴무 크레딧
     for (let day = 1; day <= daysInMonth; day++) {
       const holidayName = KOREAN_HOLIDAYS[dateOf(day)];
@@ -686,7 +677,7 @@ function App() {
           id: `${i.name}|${i.date}`,
           start: i.date,
           backgroundColor: isSelected ? SELECTED_EVENT_COLOR : DEFAULT_EVENT_COLOR,
-          borderColor: isSelected ? SELECTED_EVENT_COLOR : DEFAULT_EVENT_BORDER,
+          borderColor: "transparent",
           textColor: isSelected ? "#ffffff" : "#333333",
           extendedProps: { name: i.name, ltype },
         };
@@ -823,6 +814,7 @@ function App() {
         </select>
         <button
           type="button"
+          className="btn btn-sm"
           disabled={!addSelection}
           onClick={() => {
             if (!addSelection) return;
@@ -912,6 +904,7 @@ function App() {
 
   return (
     <div className="App">
+      <h1 style={{ textAlign: 'center', margin: '20px 0 10px' }}>BEAKER 청담점 휴무 Scheduler</h1>
       <MyCalendar
         events={calendarEvents}
         editable={isPreview}
@@ -922,17 +915,53 @@ function App() {
         renderDayExtra={renderDayExtra}
       />
       <div style={{ height: "10px" }}></div>
-      <div style={{ display: 'flex', gap: '10px', marginLeft: '400px', marginTop: '10px' }}>
-        <button onClick={genSch}> Generate </button>
-        <button onClick={confirmGeneratedSchedule} disabled={isConfirming || generatedLeaves.length === 0}>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '10px', marginBottom: '30px' }}>
+        <button className="btn btn-secondary" onClick={genSch}> 휴무 생성 </button>
+        <button className="btn" onClick={confirmGeneratedSchedule} disabled={isConfirming || generatedLeaves.length === 0}>
           {isConfirming ? '확정 중...' : '확정'}
         </button>
-        <button onClick={resetScheduleTable} disabled={isConfirming} style={{ marginLeft: '20px', color: '#b6003b' }}>
-          스케줄·휴일 입력 초기화
+        <button className="btn btn-secondary" onClick={() => setIsSettingsOpen(true)} title="설정">
+          ⚙ 설정
         </button>
       </div>
-      <div style={{ height: "10px" }}></div>
-      <Table />
+
+      <Modal
+        isOpen={isSettingsOpen}
+        onRequestClose={() => setIsSettingsOpen(false)}
+        contentLabel="설정"
+        className="settings-modal-content"
+        style={{
+          overlay: {
+            backgroundColor: 'rgba(0, 0, 0, 0.45)',
+            zIndex: 900,
+          },
+          content: {
+            position: 'absolute',
+            top: '5%',
+            left: '50%',
+            right: 'auto',
+            bottom: 'auto',
+            transform: 'translateX(-50%)',
+            margin: 0,
+            padding: '20px',
+            borderRadius: '10px',
+            background: '#ffffff',
+            boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2)',
+          },
+        }}
+      >
+        <div style={{ position: 'relative', marginBottom: '10px' }}>
+          <h2 style={{ margin: 0, textAlign: 'center' }}>설정</h2>
+          <button
+            className="btn btn-secondary"
+            style={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)' }}
+            onClick={() => setIsSettingsOpen(false)}
+          >
+            닫기
+          </button>
+        </div>
+        <Table onResetAll={resetScheduleTable} isResetting={isConfirming} />
+      </Modal>
     </div>
   );
 }

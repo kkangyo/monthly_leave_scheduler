@@ -1,3 +1,21 @@
 body {
   margin: 0;
 }
+
+/* ── 설정 창 (react-modal) ──
+   width/height/resize 는 인라인 style prop이 아니라 여기 클래스에서만 관리한다.
+   react-modal 은 style prop을 매 렌더마다 그대로 다시 적용하므로, width/height를 거기 넣으면
+   사용자가 모서리를 드래그해 리사이즈해도 다음 렌더에서 원래 크기로 되돌아가 버린다.
+   (반대로 overlay 배경색·zIndex 는 리사이즈로 건드려지지 않는 정적인 값이라 style prop에 그대로 둬야
+   한다 — react-modal 기본 오버레이 배경이 반투명 흰색이라, 클래스로만 주면 인라인 기본값에 밀려서
+   무시되고 달력이 비쳐 보이는 문제가 있었다.) */
+.settings-modal-content {
+  width: 90vw;
+  max-width: 1200px;
+  min-width: 480px;
+  height: 85vh;
+  max-height: 92vh;
+  min-height: 320px;
+  overflow: auto;
+  resize: both;
+}

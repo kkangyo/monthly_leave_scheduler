@@ -2,6 +2,14 @@ body {
   margin: 0;
 }
 
+/* 창을 넓혀도 달력이 한없이 커지지 않도록 최대 너비를 고정하고 가운데 정렬.
+   화면이 이보다 좁으면(모바일 등) 100% 너비로 자연스럽게 줄어든다. */
+.optimized_calendar {
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+
 /* ── 날짜 셀 커스텀 내용 (숫자 + 공휴일명) ── */
 .optimized_calendar .kr-day-cell {
   display: flex;
@@ -82,12 +90,4 @@ body {
 }
 .optimized_calendar .kr-day-add button {
   flex-shrink: 0;
-  font-size: 11px;
-  line-height: 1;
-  padding: 1px 5px;
-  cursor: pointer;
-}
-.optimized_calendar .kr-day-add button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
 }

@@ -1,13 +1,49 @@
+/* ── 표 (지브라 스트라이프 카드 스타일) ── */
 .table-style {
-  border-collapse: collapse;
+  border-collapse: separate;
   border-spacing: 0;
   margin-left: 20px;
+  background-color: #ffffff;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  /* table-layout: auto(기본값)는 칸 너비를 내용/브라우저 최소값에 맞춰 다시 계산하므로, 우리가 <td> 에
+     지정한 width 는 그저 "힌트"일 뿐이고 실제로는 내용에 따라 무시될 수 있다. fixed 로 바꾸고,
+     각 표에 <colgroup><col style={{width}} /></colgroup> 를 둬서(ReactTable.tsx) 칸 너비를 가장 확실한
+     방식으로 고정한다 — colgroup 의 col width 는 table-layout:fixed 알고리즘에서 그 어떤 것보다도
+     우선하는 1순위 규칙이라, th/td 에만 width 를 주는 것보다 훨씬 안정적으로 반영된다. */
+  table-layout: fixed;
 }
 
-th, td {
-  border: 1px solid #ccc;
-  padding: 4px;
-  text-align: middle;
+.table-style th,
+.table-style td {
+  border: none;
+  border-bottom: 1px solid #eceff1;
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.table-style thead th {
+  background-color: #f5f6f8;
+  color: #333333;
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 2px solid #e2e5e9;
+  white-space: nowrap; /* 헤더 텍스트는 칸이 좁아도 세로로 쪼개지지 않고 한 줄 유지 */
+  text-align: center;
+}
+
+.table-style tbody tr:nth-child(even) {
+  background-color: #f7f8fa;
+}
+
+.table-style tbody tr:hover {
+  background-color: #eef3fc;
+}
+
+.table-style tbody tr:last-child td {
+  border-bottom: none;
 }
 
 input[type="text"] {
@@ -15,4 +51,106 @@ input[type="text"] {
   border: none;
   padding: 4px;
   box-sizing: border-box;
+}
+
+/* <input>/<select> 는 기본적으로 브라우저가 부여하는 최소 너비(예: text input 은 약 20자 폭)가 있어서,
+   table-layout:auto 표에서는 그 최소 너비가 우리가 지정한 <td> width 보다 크면 그쪽이 이겨버린다.
+   그래서 columnWidths 값을 줄여도(또는 일정 값 이하로는 늘려도) 실제 렌더링 폭이 안 바뀌는 것처럼 보였다.
+   min-width: 0 으로 그 기본 최소치를 없애서 <td> 에 지정한 width 가 실제로 반영되게 한다. */
+.table-style input[type="text"],
+.table-style select {
+  min-width: 0;
+}
+
+/* ── 직원 표 (CSS Grid) ──
+   <table> + table-layout:fixed + colgroup 조합으로도 "이름" 칸만 지정한 width를 무시하고 훨씬 좁게
+   렌더링되는, 브라우저에서 원인을 특정하지 못한 문제가 있어 이 표만 <table> 대신 CSS Grid 로 전환했다.
+   grid-template-columns 는 지정한 px 값이 예외 없이 그대로 트랙 너비가 되므로 이런 모호함이 없다.
+   (다른 3개 설정 표는 <table>+colgroup 방식이 정상 동작함을 확인했으므로 그대로 둔다.) */
+.emp-grid {
+  display: grid;
+  background-color: #ffffff;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  margin-left: 20px;
+}
+
+.emp-grid-cell {
+  min-width: 0; /* grid item 기본값(min-width:auto)이 내용 크기만큼 트랙을 늘리는 것을 막는다 */
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eceff1;
+  overflow: hidden;
+}
+
+.emp-grid-cell input[type="text"],
+.emp-grid-cell select {
+  width: 100%;
+  min-width: 0;
+}
+
+.emp-grid-header {
+  background-color: #f5f6f8;
+  color: #333333;
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 2px solid #e2e5e9;
+  white-space: nowrap;
+  justify-content: center;
+  text-align: center;
+}
+
+.emp-grid-alt {
+  background-color: #f7f8fa;
+}
+
+/* ── 솔리드 버튼 ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 18px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #ffffff;
+  background-color: #1a73e8;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.05s ease;
+}
+.btn:hover:not(:disabled) {
+  background-color: #1558b0;
+}
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.btn:disabled {
+  background-color: #c3cfdc;
+  color: #f0f2f5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background-color: #5f6368;
+}
+.btn-secondary:hover:not(:disabled) {
+  background-color: #47494c;
+}
+
+.btn-danger {
+  background-color: #d93025;
+}
+.btn-danger:hover:not(:disabled) {
+  background-color: #a8241b;
+}
+
+.btn-sm {
+  padding: 5px 12px;
+  font-size: 12px;
+  border-radius: 4px;
 }

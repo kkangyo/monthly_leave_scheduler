@@ -43,8 +43,6 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
   const [scheduleEssentialWork, setScheduleEssentialWork] = useState<number[]>([8,6,1,3,2]);
   // 점장 휴무 방식: false(기본) = 사전 확정 휴무일에만 쉼 / true = 다른 직원처럼 의무 휴무(1인당 휴일)까지 배정
   const [directorFullQuota, setDirectorFullQuota] = useState<boolean>(false);
-  const [holiday, setHoliday] = useState<DateObject[]>([]);
-  const [alternativeholiday, setAlternativeholiday] = useState<DateObject[]>([]);
   const [selectedSubjob1, setSelectedSubjob1] = useState<string[]>([]);
   const [selectedSubjob2, setSelectedSubjob2] = useState<string[]>([]);
   const [currentMonth, setCurrentMonth] = useState<string>(""); // 초기값 현재 달
@@ -88,14 +86,42 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
   ) => {
     const data = { name, joblevel, description, annualleave, mandatoryworkday };
     console.log('deleteAgentinfo data',data, 'id ',id);
-    
+
     const result = await agentAPI.deleteAgentinfo(id, data);
     if (result.statusCode === 400) {
       alert(result.detail[0].constraints.isLength);
       return;
     }
 
-    syncAgentList(); 
+    syncAgentList();
+  };
+
+  // 표 전체 일괄 저장: 신규 추가/기존 수정/삭제 체크된 행을 한 번에 서버에 반영하고 마지막에 한 번만 목록을 새로고침
+  const handleBulkSaveAgents = async (
+    creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[],
+    updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[],
+    deletes: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[]
+  ) => {
+    const errors: string[] = [];
+
+    for (const c of creates) {
+      const { name, joblevel, description, annualleave, mandatoryworkday } = c;
+      const result = await agentAPI.createAgentinfo({ name, joblevel, description, annualleave, mandatoryworkday });
+      if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
+    }
+    for (const u of updates) {
+      const { id, name, joblevel, description, annualleave, mandatoryworkday } = u;
+      const result = await agentAPI.updateAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday });
+      if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
+    }
+    for (const d of deletes) {
+      const { id, name, joblevel, description, annualleave, mandatoryworkday } = d;
+      const result = await agentAPI.deleteAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday });
+      if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
+    }
+
+    await syncAgentList();
+    if (errors.length > 0) alert(errors.join("\n"));
   };
 
   const syncAgentList = async () => {
@@ -171,6 +197,10 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     const selectedMWDatesMapping: { [key: number]: {name:string; date:DateObject[]} } = {};
     const selectedmandatoryworkMapping:EventInput[] = [];
 
+    // 설정 표(DatePicker)에는 지금 보고 있는 달('YYYY-MM')의 값만 보여준다 — 없으면 빈칸, 있으면 그 달 값만.
+    //  달을 바꿀 때마다 이 값도 다시 계산되도록 아래 useEffect 의존성 배열에 currentMonth 를 넣어뒀다.
+    const monthPrefix = /^\d{4}-\d{2}$/.test(currentMonth) ? `${currentMonth}-` : null;
+
     if(agentList){
       const filteredinfo = agentList.map(({id, ...rest}) => rest); // id를 제외한 데이터로 변환
       filteredinfo.forEach((agent, rowid) => {
@@ -178,28 +208,26 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         const annualleave = agent.annualleave;
         const mandatory_workday = agent.mandatory_workday || '';
         const name = agent.name;
-        // 빈 값('')은 날짜가 없는 것으로 처리 (초기화된 직원 등)
+        // 빈 값('')은 날짜가 없는 것으로 처리 (초기화된 직원 등). 이 목록은 전체 달 이력 그대로 유지 —
+        //  스케줄 생성 알고리즘(App.tsx)이 대상 월만 알아서 다시 걸러 쓴다.
         const serverDates = description.split(',').map((date: string) => date.trim()).filter((date: string) => date.length > 0);
         const serverANDates = annualleave.split(',').map((date: string) => date.trim()).filter((date: string) => date.length > 0);
         const serverMWDates = mandatory_workday.split(',').map((date: string) => date.trim()).filter((date: string) => date.length > 0);
 
-        const dateObjects = serverDates.map((dateStr: string) => {
-          const [year, month, day] = dateStr.split('-').map(Number);
-          return new DateObject({ year, month, day });
-        });
-        selectedDatesMapping[rowid] = { name, date: dateObjects };
+        // 설정 표에 표시할 값은 지금 보는 달만 추림
+        const monthDates = monthPrefix ? serverDates.filter((d: string) => d.startsWith(monthPrefix)) : serverDates;
+        const monthANDates = monthPrefix ? serverANDates.filter((d: string) => d.startsWith(monthPrefix)) : serverANDates;
+        const monthMWDates = monthPrefix ? serverMWDates.filter((d: string) => d.startsWith(monthPrefix)) : serverMWDates;
 
-        const dateANObjects = serverANDates.map((dateStr: string) => {
-          const [year, month, day] = dateStr.split('-').map(Number);
-          return new DateObject({ year, month, day });
-        });
-        selectedANDatesMapping[rowid] = { name, date: dateANObjects };
+        const toDateObjects = (list: string[]) =>
+          list.map((dateStr: string) => {
+            const [year, month, day] = dateStr.split('-').map(Number);
+            return new DateObject({ year, month, day });
+          });
 
-        const dateMWObjects = serverMWDates.map((dateStr: string) => {
-          const [year, month, day] = dateStr.split('-').map(Number);
-          return new DateObject({ year, month, day });
-        });
-        selectedMWDatesMapping[rowid] = { name, date: dateMWObjects };
+        selectedDatesMapping[rowid] = { name, date: toDateObjects(monthDates) };
+        selectedANDatesMapping[rowid] = { name, date: toDateObjects(monthANDates) };
+        selectedMWDatesMapping[rowid] = { name, date: toDateObjects(monthMWDates) };
 
         const eventInput:EventInput[] = serverDates.map((date: string) => {
           return {title:name,start:date};
@@ -246,7 +274,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     setSelectedDateList();
-  }, [agentList]);
+  }, [agentList, currentMonth]);
 
   // 달력에서 보고 있는 달이 바뀌면 그 달의 확정 저장본과 그 달까지의 누적 사용 연차를 다시 조회
   useEffect(() => {
@@ -297,6 +325,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         handleCreateAgent,
         handleUpdateAgent,
         handleDeleteAgent,
+        handleBulkSaveAgents,
         rows,
         agentList,
         selectedDates,
@@ -307,8 +336,6 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         mandatoryWorkList,
         scheduleEssentialWork,
         directorFullQuota,
-        holiday,
-        alternativeholiday,
         selectedSubjob1,
         selectedSubjob2,
         currentMonth,
@@ -326,8 +353,6 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         setSelectedDateList,
         setScheduleEssentialWork,
         setDirectorFullQuota,
-        setHoliday,
-        setAlternativeholiday,
         setSelectedSubjob1,
         setSelectedSubjob2,
         setCurrentMonth,
