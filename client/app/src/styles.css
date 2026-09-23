@@ -1,0 +1,18 @@
+.table-style {
+  border-collapse: collapse;
+  border-spacing: 0;
+  margin-left: 20px;
+}
+
+th, td {
+  border: 1px solid #ccc;
+  padding: 4px;
+  text-align: middle;
+}
+
+input[type="text"] {
+  width: 100%;
+  border: none;
+  padding: 4px;
+  box-sizing: border-box;
+}

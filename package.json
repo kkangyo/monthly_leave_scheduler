@@ -1,0 +1,21 @@
+{
+  "name": "shunii-schedule-website",
+  "version": "1.0.0",
+  "description": "매장 직원 월 휴무 스케줄 웹앱 (client + server)",
+  "main": "index.js",
+  "scripts": {
+    "start:all": "bash ./scripts/start-all.sh",
+    "start:server": "bash ./scripts/start-server.sh",
+    "start:client": "bash ./scripts/start-client.sh",
+    "stop:server": "bash ./scripts/stop-server.sh",
+    "exit:all": "bash ./scripts/exit-all.sh",
+    "bootstrap": "bash ./scripts/install-dependencies.sh",
+    "start:windows": "cd ./server/app && tsc && docker-compose -f ./server/docker-compose.yml --env-file ./config/.server.env up -d && env-cmd -f ./config/.client.env npm start --prefix ./client/app"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "env-cmd": "^10.1.0"
+  }
+}

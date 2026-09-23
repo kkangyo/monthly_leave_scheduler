@@ -1,0 +1,93 @@
+body {
+  margin: 0;
+}
+
+/* ── 날짜 셀 커스텀 내용 (숫자 + 공휴일명) ── */
+.optimized_calendar .kr-day-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  padding: 2px 4px;
+  line-height: 1.15;
+}
+.optimized_calendar .kr-day-num {
+  font-size: 13px;
+}
+.optimized_calendar .kr-holiday-name {
+  font-size: 10px;
+  color: #d11;
+  white-space: nowrap;
+}
+
+/* 지난달/다음달 날짜는 흐리게 */
+.optimized_calendar .fc-day-other .kr-day-cell {
+  opacity: 0.35;
+}
+
+/* ── 주말 ── */
+.optimized_calendar .fc-day-sun .kr-day-num {
+  color: #d11;
+}
+.optimized_calendar .fc-day-sat .kr-day-num {
+  color: #1a53d1;
+}
+
+/* ── 공휴일 ── */
+.optimized_calendar .fc-day.kr-holiday {
+  background: rgba(221, 17, 17, 0.08);
+}
+.optimized_calendar .fc-day.kr-holiday .kr-day-num {
+  color: #d11;
+  font-weight: 700;
+}
+
+/* ── 휴무 이벤트 삭제 아이콘 (클릭해서 토글) ── */
+.optimized_calendar .kr-event-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+}
+.optimized_calendar .kr-event-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.optimized_calendar .kr-event-x {
+  flex-shrink: 0;
+  font-weight: 700;
+  padding: 0 3px;
+  cursor: pointer;
+  line-height: 1;
+}
+.optimized_calendar .kr-event-x:hover {
+  opacity: 0.7;
+}
+
+/* ── 날짜 셀 인원 추가 위젯 ── */
+.optimized_calendar .kr-day-add {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+  align-self: stretch;
+}
+.optimized_calendar .kr-day-add select {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  padding: 1px;
+}
+.optimized_calendar .kr-day-add button {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  padding: 1px 5px;
+  cursor: pointer;
+}
+.optimized_calendar .kr-day-add button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

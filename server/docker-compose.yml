@@ -1,0 +1,40 @@
+version: "3"
+
+services:
+  db:
+    image: mysql:5.7
+    platform: linux/amd64
+    container_name: leave-schedule-mysql
+    ports:
+      - ${DB_PORT}:3306
+    networks:
+      - leave-schedule
+    volumes:
+      - ./.db/etc/my.cnf:/etc/my.cnf
+      - ./.db/etc/mysqld.cnf:/etc/mysql/mysql.conf.d/mysqld.cnf
+      - ./.db/data:/var/lib/mysql
+      - ./.db/initdb.d:/docker-entrypoint-initdb.d
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PSWORD}
+      - MYSQL_DATABASE=${DB_DATABASE}
+      - TZ=Asia/Seoul
+    restart: always
+
+  nodejs:
+    depends_on:
+      - db
+    build:
+      context: .
+      dockerfile: dockerfile
+    image: leave-schedule-nodejs-image
+    container_name: leave-schedule-nodejs-container
+    ports:
+      - ${PORT}:${PORT}
+    networks:
+      - leave-schedule
+    env_file:
+      - ../config/.server.env
+    restart: always
+
+networks:
+  leave-schedule:
