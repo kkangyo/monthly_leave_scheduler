@@ -303,48 +303,37 @@ function App() {
       const spacingOk = (name: string, day: number): boolean =>
         nearestLeaveGap(name, day) >= minWorkGap;
 
-      // ── 여기까지 여러 차례 시도(고정 목표일 배열 → 반응형 페이스 → 위상 엇갈림 배열)했지만 전부
-      //  실패했다: "이 사람이 이 날 쉬어야 하는가"를 결정하는 우선순위/공식만 바꾸는 접근은, 그 공식이
-      //  아무리 정교해도 60번 무작위 시도 중 실제로 "매일 최소 1명"을 만족하는 결과가 나온다는 보장이
-      //  없다(스코어링이 그런 조합을 선호하긴 해도 강제하진 않는다). 그래서 접근 자체를 바꿔서, 본격
-      //  배정에 들어가기 '전에' 각 날짜에 최소 1명이 쉬도록 먼저 무작위로 확정해버리고, 그 다음에 기존
-      //  로직이 나머지 목표 인원을 채우도록 한다 — "매일 최소 1명"은 수학적으로 보장하되, 누가/얼마나
-      //  더 쉴지는 여전히 무작위라 Generate 할 때마다 결과는 계속 달라진다.
-      //  (이전 시도들의 코드는 docs/backups/App.tsx.2026-09-28-before-coverage-guarantee.bak 에 보존)
-      //#################### 1-1. 하루 최소 1명 휴무 보장 (날짜를 무작위 순서로 훑으며 배정)
-      const daysNeedingCoverage: number[] = [];
-      for (let d = 1; d <= daysInMonth; d++) if (!offday.includes(d)) daysNeedingCoverage.push(d);
-      for (let i = daysNeedingCoverage.length - 1; i > 0; i--) {
+      // "매일 자기 페이스보다 뒤처진 사람 우선"(전전 시도)은 반응형이라, 여러 사람이 우연히 비슷한
+      //  시점에 쉬고 나면(3일 최소 간격 때문에) 그 다음 날엔 전원이 동시에 "쿨다운" 상태라 아무도
+      //  후보가 못 되는 날이 생겼다(실제로 14/21/30일이 0명으로 나왔다) — 반응형 우선순위만으로는
+      //  사람들 사이의 리듬이 우연히 동기화되는 걸 막지 못한다.
+      //  → 아예 사람마다 "위상(phase)"을 다르게 줘서 목표 휴무일 자체를 서로 어긋나게 미리 배치한다.
+      //  같은 산식(k번째 목표 = round(k*이번달일수/(쿼터+1)))도 사람마다 phase 만큼 더해서 계산하면
+      //  목표일이 사람마다 달라지고, 팀 전체로 보면 매일 누군가의 목표일이 되도록 고르게 흩어진다.
+      //  phase 배정은 시도(runAttempt)마다 랜덤으로 섞어서, 60회 시도 중 실제로 층·책임급 등 다른
+      //  제약과 잘 맞물려 매일 고르게 채워지는 조합을 best-of-60 이 골라내게 한다.
+      const phaseAssignments = agentData.map((_, i) => i / Math.max(1, agentData.length));
+      for (let i = phaseAssignments.length - 1; i > 0; i--) {
         const j = randInt(i + 1);
-        [daysNeedingCoverage[i], daysNeedingCoverage[j]] = [daysNeedingCoverage[j], daysNeedingCoverage[i]];
+        [phaseAssignments[i], phaseAssignments[j]] = [phaseAssignments[j], phaseAssignments[i]];
       }
-      daysNeedingCoverage.forEach((day) => {
-        const date = dateOf(day);
-        // 사전 확정 휴무 등으로 이미 누군가 쉬는 날이면 통과
-        if (agentData.some((emp) => employeeleaveSchedule[emp.name].includes(date))) return;
-
-        const dailyWorkforce = agentData.filter((emp) => !employeeleaveSchedule[emp.name].includes(date));
-        const candidates = agentData.filter(
-          (emp) =>
-            !directorExempt(emp) &&
-            leaveCounter[emp.name] < maxLeavesPerEmployee &&
-            !employeeleaveSchedule[emp.name].includes(date) &&
-            !isMandatoryWork(emp.name, date) &&
-            spacingOk(emp.name, day)
-        );
-        if (candidates.length === 0) return; // 제약상 이 날은 최소 1명도 어쩔 수 없이 포기
-
-        const picked = candidates[randInt(candidates.length)];
-        offDutyEmployees[date] = [picked.name];
-        if (!checkConditionToLeave(date, dailyWorkforce, picked, false)) {
-          offDutyEmployees[date] = [];
-          return;
+      const targetRestDays: { [name: string]: number[] } = {};
+      agentData.forEach((emp, i) => {
+        const phase = phaseAssignments[i];
+        const targets: number[] = [];
+        for (let k = 1; k <= maxLeavesPerEmployee; k++) {
+          const raw = Math.round(((k + phase) * daysInMonth) / (maxLeavesPerEmployee + 1));
+          targets.push(Math.min(daysInMonth, Math.max(1, raw)));
         }
-        leaveCounter[picked.name] += 1;
-        lastLeaveDay[picked.name] = day;
-        employeeleaveSchedule[picked.name].push(date);
-        allLeaves.push({ name: picked.name, date, day });
+        targetRestDays[emp.name] = targets;
       });
+      // 이 사람이 지금까지 받은 휴무 개수(사전확정 포함) 기준 "다음 목표일". 기본 쿼터를 이미 다
+      // 채웠다면(대체휴무 등 그 이상은 섹션 5 몫) 더 이상 목표가 없다는 의미로 월말 다음날 반환.
+      const nextTargetDayFor = (name: string): number => {
+        const targets = targetRestDays[name] || [];
+        const idx = leaveCounter[name];
+        return idx < targets.length ? targets[idx] : daysInMonth + 1;
+      };
 
       //#################### 2-1. 날짜별로 휴무 배정 (오래 못 쉰 사람 우선 + 근무 간격 준수)
       for (let day = 1; day <= daysInMonth; day++) {
@@ -401,19 +390,21 @@ function App() {
             else commitLeave(emp);
           });
 
-        //#################### 2-3. 목표 휴무 인원까지 배정 — 오래 못 쉰 사람부터
-        //  1순위: 목표 간격(minWorkGap+1) 지난 사람 / 2순위: 최소 간격(minWorkGap)만 지난 사람.
-        //  "매일 최소 1명"은 이제 위 1-1 단계가 이미 보장했으니, 여기는 단순하게 나머지 목표 인원만
-        //  채우면 된다 — 예전처럼 복잡한 목표일 공식을 쓸 필요가 없어졌다.
-        const fillToTarget = (minGap: number) => {
+        //#################### 2-3. 목표 휴무 인원까지 배정
+        //  1순위: 위상이 엇갈린 자기 목표 휴무일(nextTargetDayFor)에 도달한 사람, 목표일이 이른 순
+        //  2순위: 그래도 못 채우면 최소 간격(minWorkGap)만 지난 사람 중 오래 못 쉰 사람부터
+        const fillToTarget = (
+          eligible: (emp: Agentinfo) => boolean,
+          priorityKey: (emp: Agentinfo) => number // 작을수록 우선
+        ) => {
           while (offDutyEmployees[date].length < leaveTargetOf(day)) {
             const pool = baseCandidates
-              .filter((emp) => !assigned.has(emp.name) && daysSinceLeave(emp.name, day) >= minGap)
-              .sort((a, b) => daysSinceLeave(b.name, day) - daysSinceLeave(a.name, day));
+              .filter((emp) => !assigned.has(emp.name) && eligible(emp))
+              .sort((a, b) => priorityKey(a) - priorityKey(b));
             if (pool.length === 0) break;
-            // 간격이 비슷한 상위권(±1) 중 랜덤으로 1명
-            const topGap = daysSinceLeave(pool[0].name, day);
-            const top = pool.filter((e) => daysSinceLeave(e.name, day) >= topGap - 1);
+            // 우선순위가 비슷한 상위권(±1) 중 랜덤으로 1명
+            const topKey = priorityKey(pool[0]);
+            const top = pool.filter((e) => priorityKey(e) <= topKey + 1);
             const picked = top[randInt(top.length)];
 
             offDutyEmployees[date].push(picked.name);
@@ -425,8 +416,20 @@ function App() {
             commitLeave(picked);
           }
         };
-        fillToTarget(minWorkGap + 1);
-        fillToTarget(minWorkGap);
+        fillToTarget(
+          (emp) => day >= nextTargetDayFor(emp.name),
+          (emp) => nextTargetDayFor(emp.name)
+        );
+        // 2순위(완화): 그래도 그 날 목표 인원을 못 채웠을 때만, 최소 간격만 지난 사람 중에서 채운다.
+        //  ⚠ 여기서 "오래 못 쉰 사람(daysSinceLeave 큰 사람) 우선"으로 고르면, 위상을 늦게 받아
+        //  월말(예: 30일)에 쉬도록 일부러 미뤄둔 사람이 바로 그 이유로 "가장 오래 못 쉰 사람"이 되어
+        //  훨씬 이른 날짜에 여기서 당겨져 배정돼버리고, 정작 월말엔 그 사람 몫이 남아있지 않게 된다
+        //  (실제로 이 버그 때문에 위상을 엇갈리게 줘도 말일이 계속 비었다). 그래서 여기도 "자기 목표일에
+        //  가까운/이미 지난 사람"을 여전히 우선시해서 위상 배치가 중간에 깨지지 않도록 한다.
+        fillToTarget(
+          (emp) => daysSinceLeave(emp.name, day) >= minWorkGap,
+          (emp) => nextTargetDayFor(emp.name) - day
+        );
       }
 
       //#################### 3. 휴무 인원이 적은 날부터 채우기 (근무 간격 준수 · 휴무 적은 사람 우선)

@@ -18,22 +18,22 @@
 ## 1. 전체 그림
 
 ```
-[ReactTable 입력]                 [App.tsx]                        [server /apis/agentinfo]        [MySQL]
+[ReactTable 입력 (⚙ 설정 모달)]    [App.tsx]                        [server /apis/agentinfo]        [MySQL]
  직원(이름/직무, 직급순 정렬) ──►  agentList ──────────────────────► GET  /infos ───────────────►  agent_informations
  원하는 휴일/연차/필수근무일      leaveList/annualLeaveList/         POST /infos
-                                  mandatoryWorkList                 PATCH/DELETE /infos/:id
+ (지금 보는 달만 표시·수정)       mandatoryWorkList                 PATCH/DELETE /infos/:id
  매장 필수 조건 5개 + 점장 휴무   scheduleEssentialWork /
- 방식, 전체·대체 휴일, 보조직무   directorFullQuota
-                                  + koreanHolidays.ts (자동 반영)
+ 방식, 보조직무                   directorFullQuota
+                                  + koreanHolidays.ts (자동 반영, 수동 휴일 입력 없음)
 
 [달력에서 달 이동] ──► currentMonth 변경
         │
         ├─► GET /schedule?month=YYYY-MM      ─► monthly_leaves (해당 월 확정본)  ─► 달력 표시
         └─► GET /annual-leave/usage?month=… ─► monthly_leaves (1월~해당월 연차)  ─► 표의 "누적 사용 연차"
 
-[Generate] ─► generateLeaveSchedule() ─► 화면에만 제안 표시 (미저장, 달력에서 드래그·추가·삭제로 수정 가능)
-[확정]     ─► POST /schedule/confirm  ─► monthly_leaves 에 인원별 해당 월 통째 교체 저장
-[초기화]   ─► POST /schedule/reset    ─► monthly_leaves DROP&CREATE + 직원 입력값 비움
+[휴무 생성] ─► generateLeaveSchedule() ─► 화면에만 제안 표시 (미저장, 달력에서 드래그·추가·삭제로 수정 가능)
+[확정]      ─► POST /schedule/confirm  ─► monthly_leaves 에 인원별 해당 월 통째 교체 저장
+[전체 초기화, ⚙ 설정 안] ─► POST /schedule/reset ─► monthly_leaves DROP&CREATE + 직원 입력값 비움
 ```
 
 생성 결과는 확정을 눌러야 서버에 저장되고, 달을 바꾸면 그 달의 확정 저장본이 자동으로 달력에 그려진다.
@@ -42,17 +42,24 @@
 
 ## 2. 화면 기능
 
-### 2.1 입력 표 (`ReactTable.tsx`)
+### 2.1 입력 표 (`ReactTable.tsx`, 메인 화면의 **⚙ 설정** 버튼을 눌러야 뜨는 모달 안에 위치)
 
 | 표 | 항목 | 저장 위치 |
 |---|---|---|
 | 직원 표 | 이름, 직무 등급, 원하는 휴일, 연차 신청, 필수 근무일, **누적 사용 연차(읽기전용)** | `agent_informations` (앞 5개, `"YYYY-MM-DD, ..."` 콤마 문자열) / `monthly_leaves` 집계(마지막). **직급순 정렬**(점장>부점장>매니저>대리>사원, 같은 직급이면 1층<2층) |
 | 필수 조건 | `1인당 휴일`, `평일 근무 인원(주말+1)`, `최소 책임급 수`, `필수 1층 인원`, `필수 2층 인원` | `app_settings.essentialWork` (JSON 배열). 기본값 `[8,6,1,3,2]` |
 | 점장 휴무 방식 | "사전 확정 휴무일에만 쉼" / "직원과 동일하게 의무 휴무 적용" | `app_settings.directorFullQuota` (boolean, 기본 `false`) |
-| 휴일 | 전체 휴일, 대체 휴일 | 클라이언트 상태(매번 입력, 저장 안 됨). 한국 공휴일은 자동 반영되므로 따로 넣을 필요 없음 |
 | 보조직무 | 온라인 업무 2명, RT 업무 2명 | `app_settings.subjob1`/`subjob2` |
 
-`app_settings` 항목은 변경 시 800ms 디바운스 후 `PUT /settings` 로 자동 저장, 앱 시작 시 `GET /settings` 로 로드. 표에서 행 저장 시 `POST/PATCH /infos` → 재조회.
+`app_settings` 항목은 변경 시 800ms 디바운스 후 `PUT /settings` 로 자동 저장, 앱 시작 시 `GET /settings` 로 로드.
+
+직원 표의 **원하는 휴일 / 연차 신청 / 필수 근무일**은 서버에는 인원당 전체 기간이 한 콤마 문자열로 저장되지만,
+화면에는 **지금 달력에서 보고 있는 달의 날짜만** 표시·수정된다(달을 바꾸면 그 달 값으로 다시 불러옴, 없으면 빈칸).
+저장 시에는 그 달 값만 새로 교체하고 다른 달 값은 그대로 보존한다(`mergeMonthDates`).
+
+직원 표는 행마다 저장 버튼이 있지 않고, 표 하단 **전체 저장** 버튼 한 번으로 신규 추가/실제로 값이 바뀐 행만 수정/체크된 행 삭제를
+한 번에 반영한다(`POST`/`PATCH`/`DELETE /infos` 를 모아서 실행 후 목록 재조회). 체크박스를 하나 이상 선택하면 **선택 삭제** 버튼이
+따로 나타나 그 인원들만 바로 지울 수도 있다.
 
 ### 2.2 직무 등급 (8종)
 
@@ -73,9 +80,9 @@
 
 | 버튼 | 동작 |
 |---|---|
-| **Generate** | 보고 있는 달 기준으로 스케줄 생성(60회 시도 중 최선안). 화면에만 표시(미저장). 확정본이 이미 있으면 경고. |
+| **휴무 생성** | 보고 있는 달 기준으로 스케줄 생성(60회 시도 중 최선안). 화면에만 표시(미저장). 확정본이 이미 있으면 경고. |
 | **확정** | 화면의 제안(달력 수동 수정 포함)을 `POST /schedule/confirm` 으로 저장. |
-| **스케줄·휴일 입력 초기화** (빨강) | `POST /schedule/reset` — `monthly_leaves` 전체 삭제·재생성 + 모든 직원의 원하는 휴일/연차 신청/필수 근무일 비움(이름·직무 유지). |
+| **⚙ 설정** | §2.1 의 입력 표들을 모달로 띄움. 모달 안 **전체 초기화** 버튼(빨강)이 `POST /schedule/reset` 수행 — `monthly_leaves` 전체 삭제·재생성 + 모든 직원의 원하는 휴일/연차 신청/필수 근무일 비움(이름·직무 유지). |
 
 ### 2.4 달력 (`MyCalendar.tsx` / `App.tsx`)
 
@@ -117,7 +124,7 @@
 | `minSeniors`, `minFirstFloor`, `minSecondFloor` | 하루 최소 책임급 / 1층 / 2층 인원 |
 | `minWorkGap`(3) / `maxWorkGap`(5) | 목표 연속 근무 3일 / **절대 한계 4일**(4일 도달 시 다음날 강제 휴무) |
 | `directorFullQuota` | `false`(기본): 점장은 사전 확정 휴무일에만 쉼 / `true`: 다른 직원과 동일하게 배정 대상 |
-| `offday` / `alteroffday` | 표 입력 + 한국 공휴일 자동(`"설날"`/`"추석"` 당일 → `offday`, 그 외 공휴일 → `alteroffday`) |
+| `offday` / `alteroffday` | 한국 공휴일 자동 반영만 사용(수동 입력 없음): `"설날"`/`"추석"` 당일 → `offday`, 그 외 공휴일 → `alteroffday` |
 | `mandatoryWorkSet` | 직원별 필수 근무일 — 해당 날짜엔 휴무 배정 금지 |
 
 ### 3.3 조건 검사 `checkConditionToLeave(date, workforce, member, strict)`
@@ -175,12 +182,12 @@
 
 `agent_information_id`(PK) · `created_at`(서버 정렬 기준, 클라이언트는 직급순 재정렬) · `name` · `job_level` ·
 `description`(원하는 휴일) · `annualleave`(연차 신청) · `mandatory_workday`(필수 근무일) — 마지막 3개는 전부 동일한
-`"YYYY-MM-DD, ..."` 콤마 문자열 형식. "초기화" 는 이 3개만 비우고 `name`/`job_level` 은 유지.
+`"YYYY-MM-DD, ..."` 콤마 문자열 형식. "전체 초기화" 는 이 3개만 비우고 `name`/`job_level` 은 유지.
 
 ### 5.2 `app_settings` — 앱 전역 설정 (키-값)
 
 `setting_key`(PK, `subjob1`/`subjob2`/`essentialWork`/`directorFullQuota` 등) / `setting_value`(TEXT, JSON 문자열).
-"초기화" 버튼은 이 테이블을 건드리지 않는다.
+"전체 초기화" 버튼은 이 테이블을 건드리지 않는다.
 
 ### 5.3 `monthly_leaves` — 확정된 휴일/연차 이력 (하루 = 한 행)
 
@@ -200,5 +207,5 @@
 - **이름 기준 매칭**: 신청 휴일/연차/필수근무일/confirm entries 가 모두 직원 *이름* 으로 매칭된다. 동명이인이 있으면 꼬인다.
 - **인원 부족 시 한계**: 백트래킹이 없어 조건이 빡빡하면(예: 7인 매장에서 주말 목표 7명 = 주말 휴무 0) 일부 인원이 의무
   휴무·대체휴무를 다 못 받을 수 있다 — 그래도 60개 중 최선을 낸다.
-- **달력 수동 편집은 미리보기(확정 전)에서만** 가능. 확정 저장본을 고치려면 다시 Generate 하거나 별도 API(미구현)가 필요.
-- `create_table.sql` 은 DB 볼륨 최초 생성 시에만 실행 — 기존 DB 는 `ensureAgentSchema()` + "초기화" 버튼으로 스키마를 맞춘다.
+- **달력 수동 편집은 미리보기(확정 전)에서만** 가능. 확정 저장본을 고치려면 다시 휴무 생성하거나 별도 API(미구현)가 필요.
+- `create_table.sql` 은 DB 볼륨 최초 생성 시에만 실행 — 기존 DB 는 `ensureAgentSchema()` + "전체 초기화" 버튼으로 스키마를 맞춘다.
