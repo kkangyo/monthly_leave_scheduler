@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
@@ -6,6 +7,7 @@ import {
   EventInput,
   DatesSetArg,
   DayCellContentArg,
+  DayCellMountArg,
   EventDropArg,
   EventClickArg,
   EventContentArg,
@@ -35,6 +37,8 @@ const MyCalendar: React.FC<MyCalendarProps> = ({
   renderDayExtra,
 }) => {
   const { setCurrentMonth } = useAgent();
+  // 날짜별 "인원 추가" 위젯을 꽂을 실제 DOM 노드 (휴무 목록 뒤에 이어 붙임, dayCellDidMount 에서 확보)
+  const [extraEls, setExtraEls] = useState<Record<string, HTMLDivElement>>({});
 
   const handleDatesSet = (arg: DatesSetArg) => {
     const currentDate = arg.view.currentStart;
@@ -49,16 +53,40 @@ const MyCalendar: React.FC<MyCalendarProps> = ({
   const dayCellClassNames = (arg: DayCellContentArg) =>
     getHolidayName(arg.date) ? ["kr-holiday"] : [];
 
-  // 날짜 숫자 + (공휴일이면) 공휴일 이름 + (추가 UI가 열려있으면) 인원 추가 위젯 표시
+  // 날짜 숫자 + (공휴일이면) 공휴일 이름만 표시 (상단 영역). 인원 추가 위젯은 포털로 하단에 별도 표시.
   const dayCellContent = (arg: DayCellContentArg) => {
     const name = getHolidayName(arg.date);
     return (
       <div className="kr-day-cell">
         <span className="kr-day-num">{arg.dayNumberText}</span>
         {name && <span className="kr-holiday-name">{name}</span>}
-        {renderDayExtra && renderDayExtra(ymd(arg.date))}
       </div>
     );
+  };
+
+  // dayCellContent 는 셀 상단(날짜 숫자) 영역에만 꽂히므로, 휴무 목록 뒤에 보이게 하려면
+  // 실제 셀 프레임(.fc-daygrid-day-frame, 휴무 목록 다음)에 직접 DOM 노드를 붙이고 포털로 렌더한다.
+  const dayCellDidMount = (arg: DayCellMountArg) => {
+    const frame = arg.el.querySelector(".fc-daygrid-day-frame");
+    if (!frame) return;
+    let portalEl = frame.querySelector(":scope > .kr-day-add-portal") as HTMLDivElement | null;
+    if (!portalEl) {
+      portalEl = document.createElement("div");
+      portalEl.className = "kr-day-add-portal";
+      frame.appendChild(portalEl);
+    }
+    const key = ymd(arg.date);
+    setExtraEls((prev) => (prev[key] === portalEl ? prev : { ...prev, [key]: portalEl! }));
+  };
+
+  const dayCellWillUnmount = (arg: DayCellMountArg) => {
+    const key = ymd(arg.date);
+    setExtraEls((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   };
 
   return (
@@ -81,8 +109,14 @@ const MyCalendar: React.FC<MyCalendarProps> = ({
         datesSet={handleDatesSet} // 현재 달 변경 감지
         dayCellClassNames={dayCellClassNames}
         dayCellContent={dayCellContent}
+        dayCellDidMount={dayCellDidMount}
+        dayCellWillUnmount={dayCellWillUnmount}
         fixedWeekCount={false}
       />
+      {renderDayExtra &&
+        Object.entries(extraEls).map(([dateStr, el]) =>
+          createPortal(renderDayExtra(dateStr), el, dateStr)
+        )}
     </div>
   );
 };

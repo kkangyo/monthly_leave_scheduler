@@ -572,6 +572,91 @@ function App() {
         }
       });
 
+      //#################### 5-2. 하루 휴무 인원 재분배 (많이 쉬는 날 → 적게 쉬는 날, 평일/주말 그룹 내에서만)
+      //  여기까지의 단계들은 "각자의 이번 달 의무 휴무 총량(leaveCounter)"을 채우는 데만 신경 써서,
+      //  그 과정에서 같은 평일이라도 어떤 날은 3명이 쉬고 어떤 날은 1명만 쉬는 식의 불균형이 생길 수
+      //  있다. 참고로 leaveTargetOf(하루 목표 휴무 인원)를 모든 날에 동시에 맞추는 건 애초에 수학적으로
+      //  불가능한 경우가 많다 — 예: 평일 목표 3명 × 약 22일 + 주말 목표 2명 × 약 8일 ≈ 82명일분이
+      //  필요한데, 의무 휴무 8일 × 비점장 8명 = 64명일분밖에 없으면 하루도 빠짐없이 목표를 채울 수
+      //  없다(목표 미달은 정상적인 결과). 그래서 '목표에 맞추기'가 아니라, 평일은 평일끼리·주말은
+      //  주말끼리(의도된 평일/주말 차이는 그대로 둠) 최대-최소 휴무 인원 차이가 2명 이상인 날이 있으면
+      //  많이 쉬는 날에서 적게 쉬는 날로 한 명씩 옮겨 그 차이를 최대한 1명 이하로 줄인다. 개인별 총
+      //  휴무 일수는 그대로 두므로(=의무 휴무 조건을 절대 깨지 않음) "이동"만 하고, 사전 확정 휴무
+      //  (신청 휴일/연차)는 옮기지 않으며, 옮긴 뒤에도 그 날짜의 일반 조건(strict)과 최소 근무 간격을
+      //  반드시 지킨다.
+      const presetDateSet = new Set(basePreLeaves.map((l) => `${l.name}|${l.date}`));
+
+      const tryRebalanceMove = (groupDays: number[]): boolean => {
+        const counts = groupDays.map((d) => ({ day: d, count: offDutyEmployees[dateOf(d)]?.length ?? 0 }));
+        const overSorted = [...counts].sort((a, b) => b.count - a.count);
+        const underSorted = [...counts].sort((a, b) => a.count - b.count);
+
+        for (const over of overSorted) {
+          for (const under of underSorted) {
+            if (over.count - under.count < 2) break; // 이 over 는 더 줄 수 있는 under 가 없음 → 다음 over 로
+            if (over.day === under.day) continue;
+
+            const fromDate = dateOf(over.day);
+            const toDay = under.day;
+            const toDate = dateOf(toDay);
+            const movable = (offDutyEmployees[fromDate] || []).filter(
+              (name) => !presetDateSet.has(`${name}|${fromDate}`)
+            );
+
+            for (const name of movable) {
+              const emp = agentData.find((e) => e.name === name);
+              if (!emp || directorExempt(emp)) continue;
+              if (employeeleaveSchedule[name].includes(toDate)) continue;
+              if (isMandatoryWork(name, toDate)) continue;
+
+              const otherDates = employeeleaveSchedule[name].filter((d) => d !== fromDate);
+              const gapToOthers = otherDates.reduce(
+                (best, d) => Math.min(best, Math.abs(parseInt(d.split("-")[2], 10) - toDay)),
+                999
+              );
+              if (gapToOthers < minWorkGap) continue; // 옮긴 뒤에도 최소 근무 간격은 지켜야 함
+
+              const original = employeeleaveSchedule[name];
+              employeeleaveSchedule[name] = [...otherDates, toDate];
+              const toWorkforce = agentData.filter((e) => !employeeleaveSchedule[e.name].includes(toDate));
+              if (!checkConditionToLeave(toDate, toWorkforce, emp, true)) {
+                employeeleaveSchedule[name] = original; // 되돌리기
+                continue;
+              }
+
+              // 확정: from 에서 빼고 to 로 옮김 (총 휴무 일수는 그대로)
+              offDutyEmployees[fromDate] = (offDutyEmployees[fromDate] || []).filter((n) => n !== name);
+              if (!offDutyEmployees[toDate]) offDutyEmployees[toDate] = [];
+              offDutyEmployees[toDate].push(name);
+              lastLeaveDay[name] = Math.max(lastLeaveDay[name] ?? toDay, toDay);
+              const rec = allLeaves.find((l) => l.name === name && l.date === fromDate);
+              if (rec) {
+                rec.date = toDate;
+                rec.day = toDay;
+              }
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+
+      const rebalanceGroup = (groupDays: number[]) => {
+        let guard = 0;
+        while (guard++ < 60 && tryRebalanceMove(groupDays)) {
+          /* 더 옮길 수 있는 조합이 없을 때까지 반복 */
+        }
+      };
+
+      const weekdayDays: number[] = [];
+      const weekendDays: number[] = [];
+      for (let day = 1; day <= daysInMonth; day++) {
+        if (offday.includes(day)) continue;
+        (isWeekendDay(day) ? weekendDays : weekdayDays).push(day);
+      }
+      rebalanceGroup(weekdayDays);
+      rebalanceGroup(weekendDays);
+
       return { employeeleaveSchedule, leaveCounter, lastLeaveDay, offDutyEmployees, allLeaves };
     };
 
