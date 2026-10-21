@@ -12,7 +12,7 @@ body {
 .settings-modal-content {
   width: 90vw;
   max-width: 1200px;
-  min-width: 480px;
+  min-width: min(480px, 95vw); /* 폰처럼 480px 보다 좁은 화면에서 창이 화면 밖으로 삐져나가지 않게 */
   height: 85vh;
   max-height: 92vh;
   min-height: 320px;

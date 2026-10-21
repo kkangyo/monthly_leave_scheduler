@@ -2,10 +2,18 @@ body {
   margin: 0;
 }
 
-/* 창을 넓혀도 달력이 한없이 커지지 않도록 최대 너비를 고정하고 가운데 정렬.
-   화면이 이보다 좁으면(모바일 등) 100% 너비로 자연스럽게 줄어든다. */
+/* 달력 바깥 가로 스크롤 영역: 화면이 달력 최소 너비보다 좁으면 이 영역 안에서만 좌우로 스크롤된다
+   (페이지 전체가 옆으로 밀리지 않음). */
+.calendar-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 창을 넓혀도 달력이 한없이 커지지 않도록 최대 너비를, 창을 줄여도 칸이 찌그러지지 않도록 최소 너비를
+   고정하고 가운데 정렬. 그 사이에서는 화면 너비에 맞춰 늘고 준다. */
 .optimized_calendar {
   max-width: 1100px;
+  min-width: 750px;
   width: 100%;
   margin: 0 auto;
 }
@@ -99,3 +107,4 @@ body {
 .optimized_calendar .kr-day-add button {
   flex-shrink: 0;
 }
+

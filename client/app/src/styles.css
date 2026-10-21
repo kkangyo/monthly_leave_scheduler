@@ -69,6 +69,7 @@ input[type="text"] {
    (다른 3개 설정 표는 <table>+colgroup 방식이 정상 동작함을 확인했으므로 그대로 둔다.) */
 .emp-grid {
   display: grid;
+  width: max-content; /* 블록 기본값(부모 너비)이면 넘치는 칸이 overflow:hidden 에 잘린다 → 내용 폭만큼 넓힌다 */
   background-color: #ffffff;
   border-radius: 10px;
   overflow: hidden;

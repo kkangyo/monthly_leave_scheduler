@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Modal from 'react-modal';
 import {useAgent} from "./hooks/useAgentinfo";
 import DatePicker from 'react-multi-date-picker';
@@ -46,6 +46,13 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
     annualLeaveUsage,
     currentMonth,
   } = useAgent();
+
+  // 표의 DatePicker 들이 열릴 때 처음 보여줄 달을 메인 달력의 달(currentMonth 'YYYY-MM')과 맞춘다.
+  // (지정하지 않으면 선택된 날짜가 없는 칸은 오늘이 속한 달로 열린다)
+  const pickerMonth = useMemo(
+    () => (/^\d{4}-\d{2}$/.test(currentMonth) ? new DateObject(`${currentMonth}-01`) : undefined),
+    [currentMonth]
+  );
 
   const [data, setData] = useState<Agent[]>([]); // Agent[] 타입으로 초기화
   const [isModalOpen, setIsModalOpen] = useState(false); // 모달 열기/닫기 상태
@@ -448,7 +455,9 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
       <div style={{ height: "20px" }}></div> {/* 여백 추가 */}
       {/* 직원 표: <table>의 table-layout:fixed + colgroup 조합이 특정 칸에서 지정한 width를 무시하고
           훨씬 좁게 렌더하는, 재현 원인을 특정 못 한 문제가 있어 이 표만 CSS Grid 로 전환했다.
-          grid-template-columns 는 지정한 px 값이 예외 없이 그대로 트랙 너비가 되어 이런 모호함이 없다. */}
+          grid-template-columns 는 지정한 px 값이 예외 없이 그대로 트랙 너비가 되어 이런 모호함이 없다.
+          표 너비는 max-content 로 내용만큼 넓히고, 넘치는 부분은 설정 창(.settings-modal-content) 하나의
+          가로 스크롤로 본다(표 전용 스크롤을 따로 두면 창 스크롤과 겹쳐 오른쪽이 잘려 보였다). */}
       <div
         className="emp-grid"
         style={{ gridTemplateColumns: `40px ${columnWidths.map((w) => `${w}px`).join(' ')}` }}
@@ -503,6 +512,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
                       readOnly={!editableColumns[colIndex]}
                       format="MM/DD"
                       calendarPosition="bottom-center"
+                      currentDate={pickerMonth}
                       className="black"
                     />
                   ) : field === "annualleave" ? (
@@ -515,6 +525,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
                       readOnly={!editableColumns[colIndex]}
                       format="MM/DD"
                       calendarPosition="bottom-center"
+                      currentDate={pickerMonth}
                       className="black"
                     />
                   ) : field === "mandatory_workday" ? (
@@ -527,6 +538,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
                       readOnly={!editableColumns[colIndex]}
                       format="MM/DD"
                       calendarPosition="bottom-center"
+                      currentDate={pickerMonth}
                       className="black"
                     />
                   ) : (

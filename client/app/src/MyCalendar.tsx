@@ -89,7 +89,10 @@ const MyCalendar: React.FC<MyCalendarProps> = ({
     });
   };
 
+  // 바깥 래퍼는 가로 스크롤 영역: 달력은 최소 너비(MyCalendar.css)보다 줄어들지 않고,
+  // 화면이 그보다 좁으면 좌우 드래그/스크롤로 본다.
   return (
+    <div className="calendar-scroll">
     <div className="optimized_calendar">
       <FullCalendar
         plugins={[dayGridPlugin, interactionPlugin]}
@@ -117,6 +120,7 @@ const MyCalendar: React.FC<MyCalendarProps> = ({
         Object.entries(extraEls).map(([dateStr, el]) =>
           createPortal(renderDayExtra(dateStr), el, dateStr)
         )}
+    </div>
     </div>
   );
 };
