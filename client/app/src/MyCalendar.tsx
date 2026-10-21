@@ -99,8 +99,8 @@ const MyCalendar: React.FC<MyCalendarProps> = ({
         initialView="dayGridMonth"
         headerToolbar={{
           left: '',
-          center: 'title',
-          right: 'prev next', // 쉼표(prev,next)면 버튼이 붙어서 렌더되고, 공백으로 구분하면 그룹이 나뉘어 사이에 기본 여백이 생긴다
+          center: 'prev title next', // 이전 달 버튼은 월 텍스트 왼쪽, 다음 달 버튼은 오른쪽
+          right: '',
         }}
         events={events}
         editable={editable}          // 미리보기일 때만 드래그 이동 허용

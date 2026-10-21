@@ -108,3 +108,13 @@ body {
   flex-shrink: 0;
 }
 
+/* ── 상단 툴바: [<] 월 텍스트 [>] ──
+   가운데 묶음을 flex 로 만들어 버튼과 제목의 세로 중앙을 맞추고 간격을 일정하게 둔다. */
+.optimized_calendar .fc-toolbar-chunk:nth-child(2) {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.optimized_calendar .fc-toolbar-chunk:nth-child(2) > * {
+  margin: 0;
+}

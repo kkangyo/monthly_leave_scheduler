@@ -216,3 +216,23 @@
   휴무·대체휴무를 다 못 받을 수 있다 — 그래도 60개 중 최선을 낸다.
 - **달력 수동 편집은 미리보기(확정 전)에서만** 가능. 확정 저장본을 고치려면 다시 휴무 생성하거나 별도 API(미구현)가 필요.
 - `create_table.sql` 은 DB 볼륨 최초 생성 시에만 실행 — 기존 DB 는 `ensureAgentSchema()` + "전체 초기화" 버튼으로 스키마를 맞춘다.
+
+---
+
+## 7. UI 변경 이력
+
+### 2026-10-21 — 작은 화면(모바일) 대응
+
+- **설정 창 직원 표 가로 잘림 수정** (`ReactTable.tsx`, `styles.css`): `.emp-grid` 가 부모(모달) 너비로 고정돼
+  넘치는 칸이 `overflow:hidden` 에 잘렸다 → `width: max-content` 로 내용 폭만큼 넓히고, 넘치는 부분은 설정 창
+  (`.settings-modal-content`) 의 가로 스크롤 하나로 본다. (표 전용 스크롤 래퍼를 따로 두면 모달 스크롤과 겹쳐
+  창을 줄였을 때 오른쪽이 잘려 보여서 제거.)
+- **설정 창 최소 너비** (`App.css`): `min-width: 480px` → `min(480px, 95vw)` — 폰에서 창이 화면 밖으로 나가지 않게.
+- **설정 표 DatePicker 초기 달** (`ReactTable.tsx`): 원하는 휴일/연차 신청/필수 근무일 DatePicker 3개에
+  `currentDate={new DateObject(`${currentMonth}-01`)}` 지정 — 선택된 날짜가 없어도 메인 달력과 같은 달로 열린다.
+- **메인 달력 최소 너비 + 가로 스크롤** (`MyCalendar.tsx`, `MyCalendar.css`): `.optimized_calendar` 에
+  `min-width: 760px`(최대 1100px 은 유지)를 주고 `.calendar-scroll`(`overflow-x:auto`) 로 감쌌다. 화면이 더 좁으면
+  달력이 찌그러지지 않고 달력 영역만 좌우 드래그/스크롤된다. (중간에 시도한 모바일 전용 `height="auto"` + 칸
+  `min-height` 방식은 이것으로 대체되어 제거.)
+- **월 이동 버튼 위치** (`MyCalendar.tsx`, `MyCalendar.css`): `headerToolbar` 를 `center: 'prev title next'` 로 바꿔
+  `[<] 월 텍스트 [>]` 배치. 가운데 툴바 묶음을 flex(`gap: 16px`, 세로 중앙 정렬)로 맞춤.
