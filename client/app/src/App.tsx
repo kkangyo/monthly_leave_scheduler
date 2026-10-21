@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Modal from "react-modal";
 import { useAgent } from "./hooks/useAgentinfo";
+import { useAuth } from "./hooks/useAuth";
 import "./App.css";
 import "./styles.css";
 
@@ -8,6 +9,7 @@ import MyCalendar from "./MyCalendar";
 import { EventInput, EventDropArg, EventClickArg, EventContentArg } from "@fullcalendar/core";
 import { DateClickArg } from "@fullcalendar/interaction";
 import Table from "./ReactTable";
+import StoreManager from "./StoreManager";
 import { KOREAN_HOLIDAYS } from "./koreanHolidays";
 
 export interface Agentinfo {
@@ -36,6 +38,9 @@ function App() {
     confirmSchedule,
     resetMonthlyScheduleTable,
   } = useAgent();
+  const { profile, logout } = useAuth();
+  const isAdmin = !!profile?.isAdmin;
+  const isSuperadmin = !!profile?.isSuperadmin;
 
   const [agentData, setAgentData] = useState<Agentinfo[]>([]);
   // 확정 저장을 위해 마지막으로 생성된 휴무(가공 전 원본)와 그 대상 달을 보관
@@ -53,6 +58,8 @@ function App() {
   const [selectedEmployee, setSelectedEmployee] = useState<string | null>(null);
   // 설정 창(직원/필수 조건/보조직무 표) 표시 여부
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // 슈퍼관리자 전용 매장 관리 창(매장 목록/생성/전환/삭제) 표시 여부
+  const [isStoreManagerOpen, setIsStoreManagerOpen] = useState(false);
 
   useEffect(() => {
     if (agentList) {
@@ -1053,7 +1060,16 @@ function App() {
 
   return (
     <div className="App">
-      <h1 style={{ textAlign: 'center', margin: '20px 0 10px' }}>BEAKER 청담점 휴무 Scheduler</h1>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px', margin: '20px 0 10px' }}>
+        <h1 style={{ margin: 0, textAlign: 'center' }}>{profile?.storeName ?? ''} 휴무 Scheduler</h1>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', marginBottom: '6px', fontSize: '13px', color: '#555' }}>
+        <span>{profile?.name} {!isSuperadmin && isAdmin ? '(관리자)' : ''}</span>
+        {isSuperadmin && (
+          <button className="btn btn-sm" onClick={() => setIsStoreManagerOpen(true)}>매장 관리</button>
+        )}
+        <button className="btn btn-secondary btn-sm" onClick={logout}>로그아웃</button>
+      </div>
       <MyCalendar
         events={calendarEvents}
         editable={isPreview}
@@ -1065,10 +1081,14 @@ function App() {
       />
       <div style={{ height: "10px" }}></div>
       <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '10px', marginBottom: '30px' }}>
-        <button className="btn btn-secondary" onClick={genSch}> 휴무 생성 </button>
-        <button className="btn" onClick={confirmGeneratedSchedule} disabled={isConfirming || generatedLeaves.length === 0}>
-          {isConfirming ? '확정 중...' : '확정'}
-        </button>
+        {isAdmin && (
+          <>
+            <button className="btn btn-secondary" onClick={genSch}> 휴무 생성 </button>
+            <button className="btn" onClick={confirmGeneratedSchedule} disabled={isConfirming || generatedLeaves.length === 0}>
+              {isConfirming ? '확정 중...' : '확정'}
+            </button>
+          </>
+        )}
         <button className="btn btn-secondary" onClick={() => setIsSettingsOpen(true)} title="설정">
           ⚙ 설정
         </button>
@@ -1109,8 +1129,17 @@ function App() {
             닫기
           </button>
         </div>
-        <Table onResetAll={resetScheduleTable} isResetting={isConfirming} />
+        <Table
+          onResetAll={resetScheduleTable}
+          isResetting={isConfirming}
+          isAdmin={isAdmin}
+          myAgentId={profile?.agentId}
+        />
       </Modal>
+
+      {isSuperadmin && (
+        <StoreManager isOpen={isStoreManagerOpen} onClose={() => setIsStoreManagerOpen(false)} />
+      )}
     </div>
   );
 }

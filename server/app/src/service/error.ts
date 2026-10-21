@@ -24,3 +24,21 @@ export class NotFoundError extends Error {
     this.code = 404;
   }
 }
+
+export class UnauthorizedError extends Error {
+  code: number;
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnauthorizedError';
+    this.code = 401;
+  }
+}
+
+export class ForbiddenError extends Error {
+  code: number;
+  constructor(message: string) {
+    super(message);
+    this.name = 'ForbiddenError';
+    this.code = 403;
+  }
+}

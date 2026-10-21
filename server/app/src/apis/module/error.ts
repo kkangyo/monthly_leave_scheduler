@@ -1,12 +1,14 @@
 import {
   BadRequestError,
+  ForbiddenError,
   NotFoundError,
   ServerError,
+  UnauthorizedError,
 } from '../../service/error';
 import { Response } from 'express';
 
 function errorResposne(
-  err: unknown | ServerError | BadRequestError | NotFoundError,
+  err: unknown | ServerError | BadRequestError | NotFoundError | UnauthorizedError | ForbiddenError,
   res: Response
 ) {
   if (err instanceof ServerError) {
@@ -20,6 +22,14 @@ function errorResposne(
   if (err instanceof NotFoundError) {
     console.error(err);
     return res.status(404).json({ statusCode: err.code, msg: err.message });
+  }
+  if (err instanceof UnauthorizedError) {
+    console.error(err);
+    return res.status(401).json({ statusCode: err.code, msg: err.message });
+  }
+  if (err instanceof ForbiddenError) {
+    console.error(err);
+    return res.status(403).json({ statusCode: err.code, msg: err.message });
   }
   console.error(err);
   return res.status(500).json({ statusCode: 500, msg: 'Unknown error' });

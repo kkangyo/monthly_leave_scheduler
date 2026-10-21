@@ -21,7 +21,7 @@ class Agentinfo {
     this.body = body;
   }
 
-  async createAgent(): Promise<string> {
+  async createAgent(storeId: string): Promise<string> {
     const { body } = this;
 
     const agentdata: AgentinfoDto = {
@@ -30,30 +30,53 @@ class Agentinfo {
       description: body.description,
       annualleave: body.annualleave,
       mandatoryworkday: body.mandatoryworkday ?? '',
+      isschedulemanager: !!body.isschedulemanager,
     };
 
     const commentId = await this.agentinfoRepository.createAgent(
+      storeId,
       agentdata
     );
 
     if (commentId) return commentId;
     throw new ServerError('Interver Server Error');
   }
-  
-  async updateAgentinfoById(agentinfoId: string): Promise<Response> {
-    const { name, joblevel, description, annualleave, mandatoryworkday }: AgentinfoDto =
+
+  // 매장 관리자용: 전체 필드(이름/직무/휴무 관리 권한 포함) 수정
+  async updateAgentinfoById(agentinfoId: string, storeId: string): Promise<Response> {
+    const { name, joblevel, description, annualleave, mandatoryworkday, isschedulemanager }: AgentinfoDto =
       this.body;
 
     const agentinfo = await this.agentinfoRepository.getAgentinfoById(
       agentinfoId
     );
 
-    if (!agentinfo) throw new NotFoundError('No data exists');
+    if (!agentinfo || agentinfo.store_id !== storeId) throw new NotFoundError('No data exists');
 
     await this.agentinfoRepository.updateAgentinfo(
       agentinfoId,
+      storeId,
       name,
       joblevel,
+      description,
+      annualleave,
+      mandatoryworkday ?? '',
+      !!isschedulemanager
+    );
+
+    return { success: true, msg: 'Agent info update complete' };
+  }
+
+  // 본인 전용: 원하는휴일/연차신청/필수근무일만 수정 (이름/직무/권한은 바꿀 수 없음)
+  async updateOwnAgentinfo(agentinfoId: string, storeId: string): Promise<Response> {
+    const { description, annualleave, mandatoryworkday }: AgentinfoDto = this.body;
+
+    const agentinfo = await this.agentinfoRepository.getAgentinfoById(agentinfoId);
+    if (!agentinfo || agentinfo.store_id !== storeId) throw new NotFoundError('No data exists');
+
+    await this.agentinfoRepository.updateOwnLeaveFields(
+      agentinfoId,
+      storeId,
       description,
       annualleave,
       mandatoryworkday ?? ''
@@ -62,20 +85,21 @@ class Agentinfo {
     return { success: true, msg: 'Agent info update complete' };
   }
 
-  async getAgentCount(): Promise<number> {
-    const agentcount = await this.agentinfoRepository.getAgentCount();
+  async getAgentCount(storeId: string): Promise<number> {
+    const agentcount = await this.agentinfoRepository.getAgentCount(storeId);
 
     return agentcount;
   }
 
-  async getAgentinfos(): Promise<{ agentinfos: AgentinfoEntity[] }> {
-    const agentinfos = await this.agentinfoRepository.getAgentinfos();
+  async getAgentinfos(storeId: string): Promise<{ agentinfos: AgentinfoEntity[] }> {
+    const agentinfos = await this.agentinfoRepository.getAgentinfos(storeId);
 
     return { agentinfos };
   }
 
   // 월 스케줄 확정: 인원별로 해당 월의 확정 휴일/연차를 통째로 교체 저장
   async confirmMonthlySchedule(
+    storeId: string,
     body: ConfirmScheduleBody
   ): Promise<{ success: boolean; count: number }> {
     const { scheduleMonth, entries } = body;
@@ -113,6 +137,7 @@ class Agentinfo {
 
       await this.agentinfoRepository.replaceAgentMonthLeaves(
         entry.agentId,
+        storeId,
         scheduleMonth,
         rows
       );
@@ -123,34 +148,36 @@ class Agentinfo {
 
   // 특정 월('YYYY-MM')의 확정 휴일/연차 조회
   async getMonthlySchedule(
+    storeId: string,
     month: string
   ): Promise<{ leaves: MonthlyLeaveRow[] }> {
     if (!/^\d{4}-\d{2}$/.test(month ?? ''))
       throw new BadRequestError('month must be "YYYY-MM"');
 
-    const leaves = await this.agentinfoRepository.getMonthlyLeaves(month);
+    const leaves = await this.agentinfoRepository.getMonthlyLeaves(storeId, month);
 
     return { leaves };
   }
 
-  // 스케줄 초기화:
-  //  - monthly_leaves 테이블 DROP 후 재생성 (확정 저장/연차 사용 기록 삭제)
-  //  - 모든 직원의 '원하는 휴일' / '연차 신청' 입력값 비움 (이름/직무는 유지)
-  async resetMonthlySchedule(): Promise<{ success: boolean; clearedAgents: number }> {
+  // 스케줄 초기화(이 매장만):
+  //  - 이 매장의 monthly_leaves 전부 삭제 (확정 저장/연차 사용 기록 삭제)
+  //  - 이 매장 모든 직원의 '원하는 휴일' / '연차 신청' 입력값 비움 (이름/직무는 유지)
+  async resetMonthlySchedule(storeId: string): Promise<{ success: boolean; clearedAgents: number }> {
     await this.agentinfoRepository.ensureAgentSchema();
-    await this.agentinfoRepository.resetMonthlyLeavesTable();
-    const clearedAgents = await this.agentinfoRepository.clearAgentLeaveInputs();
+    await this.agentinfoRepository.resetMonthlyLeavesTable(storeId);
+    const clearedAgents = await this.agentinfoRepository.clearAgentLeaveInputs(storeId);
     return { success: true, clearedAgents };
   }
 
   // 해당 연도 1월부터 지정한 달까지의 인원별 누적 사용 연차 수
   async getAnnualLeaveUsage(
+    storeId: string,
     month: string
   ): Promise<{ usage: { [agentId: string]: number } }> {
     if (!/^\d{4}-\d{2}$/.test(month ?? ''))
       throw new BadRequestError('month must be "YYYY-MM"');
 
-    const rows = await this.agentinfoRepository.getAnnualLeaveUsageUpToMonth(month);
+    const rows = await this.agentinfoRepository.getAnnualLeaveUsageUpToMonth(storeId, month);
 
     const usage: { [agentId: string]: number } = {};
     rows.forEach((r) => {
@@ -161,8 +188,8 @@ class Agentinfo {
   }
 
   // 앱 전역 설정 조회: 저장된 JSON 문자열을 파싱해서 반환
-  async getAppSettings(): Promise<{ settings: { [key: string]: unknown } }> {
-    const rows = await this.agentinfoRepository.getAppSettings();
+  async getAppSettings(storeId: string): Promise<{ settings: { [key: string]: unknown } }> {
+    const rows = await this.agentinfoRepository.getAppSettings(storeId);
 
     const settings: { [key: string]: unknown } = {};
     rows.forEach((r) => {
@@ -178,6 +205,7 @@ class Agentinfo {
 
   // 앱 전역 설정 저장: body 의 각 키를 JSON 문자열로 upsert
   async updateAppSettings(
+    storeId: string,
     body: { [key: string]: unknown }
   ): Promise<{ success: boolean; count: number }> {
     if (!body || typeof body !== 'object' || Array.isArray(body))
@@ -191,6 +219,7 @@ class Agentinfo {
       if (!/^[a-zA-Z0-9_]{1,64}$/.test(key))
         throw new BadRequestError(`invalid setting key: ${key}`);
       await this.agentinfoRepository.upsertAppSetting(
+        storeId,
         key,
         JSON.stringify(body[key])
       );
@@ -199,15 +228,16 @@ class Agentinfo {
     return { success: true, count: keys.length };
   }
 
-  async deleteAgentinfoById(agentinfoId: string): Promise<boolean> {
+  async deleteAgentinfoById(agentinfoId: string, storeId: string): Promise<boolean> {
     const agentdata = await this.agentinfoRepository.getAgentinfoById(
       agentinfoId
     );
 
-    if (!agentdata) throw new NotFoundError('No data exists');
+    if (!agentdata || agentdata.store_id !== storeId) throw new NotFoundError('No data exists');
 
     const isDelete = await this.agentinfoRepository.deleteAgentinfoById(
-      agentinfoId
+      agentinfoId,
+      storeId
     );
 
     if (isDelete) return true;

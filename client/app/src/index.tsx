@@ -1,13 +1,13 @@
 import ReactDOM from "react-dom/client";
 import "./index.css";
-import App from "./App";
-import { AgentProvider } from "./hooks/useAgentinfo";
+import { AuthProvider } from "./hooks/useAuth";
+import AuthGate from "./AuthGate";
 
 const root = ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement
 );
 root.render(
-  <AgentProvider>
-    <App />
-  </AgentProvider>
+  <AuthProvider>
+    <AuthGate />
+  </AuthProvider>
 );

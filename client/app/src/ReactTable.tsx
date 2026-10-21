@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Modal from 'react-modal';
 import {useAgent} from "./hooks/useAgentinfo";
+import authAPI from "./apis/auth";
 import DatePicker from 'react-multi-date-picker';
 import "react-multi-date-picker/styles/layouts/mobile.css";
 import "react-multi-date-picker/styles/colors/green.css";
@@ -14,6 +15,7 @@ export interface Agent {
   description: string;
   annualleave: string;
   mandatory_workday: string;
+  is_schedule_manager?: number; // 0/1 — "휴무 관리" 권한(관리자가 직무와 무관하게 부여)
   ischecked?: boolean; // 체크하면 '선택 삭제' 버튼이 나타나고, '전체 저장' 시에도 삭제 대상
 }
 
@@ -22,9 +24,11 @@ Modal.setAppElement('#root');
 interface TableProps {
   onResetAll?: () => void; // 전체 초기화(스케줄·휴일 입력) 버튼 클릭 핸들러 — App.tsx 소유 로직
   isResetting?: boolean; // 초기화 진행 중이면 버튼 비활성화
+  isAdmin?: boolean; // 매장 관리자(또는 슈퍼관리자)면 전체 편집 + 관리 기능, 아니면 본인 행만
+  myAgentId?: string; // 로그인한 본인의 agent_information_id
 }
 
-const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
+const Table: React.FC<TableProps> = ({ onResetAll, isResetting, isAdmin = false, myAgentId }) => {
   const {
     agentList,
     selectedDates,
@@ -47,6 +51,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
     currentMonth,
   } = useAgent();
 
+
   // 표의 DatePicker 들이 열릴 때 처음 보여줄 달을 메인 달력의 달(currentMonth 'YYYY-MM')과 맞춘다.
   // (지정하지 않으면 선택된 날짜가 없는 칸은 오늘이 속한 달로 열린다)
   const pickerMonth = useMemo(
@@ -54,10 +59,25 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
     [currentMonth]
   );
 
+  // 이 행의 이 필드를 지금 로그인한 사람이 수정할 수 있는지.
+  //  관리자: 전부. 본인: 원하는휴일/연차신청/필수근무일만(이름/직무/권한은 관리자만).
+  const canEditField = (row: Agent, field: string): boolean => {
+    if (isAdmin) return true;
+    if (!myAgentId || row.id !== myAgentId) return false;
+    return field === 'description' || field === 'annualleave' || field === 'mandatory_workday';
+  };
+
   const [data, setData] = useState<Agent[]>([]); // Agent[] 타입으로 초기화
   const [isModalOpen, setIsModalOpen] = useState(false); // 모달 열기/닫기 상태
   const [modalMessage, setModalMessage] = useState(""); // 모달에 표시할 메시지
   const [confirmAction, setConfirmAction] = useState<(() => void) | null>(null); // 확인 버튼에서 실행할 함수 저장
+
+  // 관리자 전용: 직원 행별 로그인 계정 생성/비밀번호 재설정 모달
+  const [accountModalAgent, setAccountModalAgent] = useState<{ id: string; name: string } | null>(null);
+  const [accountLoginId, setAccountLoginId] = useState("");
+  const [accountPassword, setAccountPassword] = useState("");
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [accountSubmitting, setAccountSubmitting] = useState(false);
 
   // 수동으로 열 너비 설정
   const columnWidths = [90, 110, 250, 200, 200, 100];
@@ -72,8 +92,6 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
 
   // Header 이름 설정
   const headerNames = ['이름','직무 등급','원하는 휴일', '연차 신청', '필수 근무일', '누적 사용 연차'];
-  // 수동으로 열 수정 가능 여부 설정 (마지막 '누적 사용 연차'는 읽기 전용)
-  const editableColumns = [true, true, true, true, true, false];
 
   // agentList를 기반으로 데이터 설정
   useEffect(() => {
@@ -115,6 +133,48 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
   // 취소 버튼 클릭 시 모달 닫기
   const handleCancel = () => {
     closeModal(); // 모달 닫기
+  };
+
+  // 관리자 전용: 계정 생성/비밀번호 재설정 모달 열기·닫기·제출
+  const openAccountModal = (id: string, name: string) => {
+    setAccountModalAgent({ id, name });
+    setAccountLoginId("");
+    setAccountPassword("");
+    setAccountError(null);
+  };
+
+  const closeAccountModal = () => setAccountModalAgent(null);
+
+  const handleAccountSubmit = async () => {
+    if (!accountModalAgent) return;
+    if (!accountPassword || accountPassword.length < 8) {
+      setAccountError("비밀번호는 8자 이상이어야 합니다.");
+      return;
+    }
+    setAccountSubmitting(true);
+    setAccountError(null);
+    try {
+      // 아이디를 입력했으면 신규 계정 생성 시도, 이미 계정이 있으면 비밀번호 재설정으로 대체.
+      // 아이디를 비웠으면(기존 계정 비밀번호만 바꾸고 싶을 때) 바로 재설정.
+      let result = accountLoginId
+        ? await authAPI.createAccount(accountModalAgent.id, accountLoginId, accountPassword)
+        : await authAPI.resetPassword(accountModalAgent.id, accountPassword);
+
+      if (accountLoginId && result?.statusCode === 400 && String(result.msg || "").includes("이미 계정이")) {
+        result = await authAPI.resetPassword(accountModalAgent.id, accountPassword);
+      }
+
+      if (result?.statusCode && result.statusCode >= 400) {
+        setAccountError(result.msg ?? "처리에 실패했습니다.");
+        return;
+      }
+      alert(`${accountModalAgent.name}님의 계정 정보를 저장했습니다.`);
+      closeAccountModal();
+    } catch {
+      setAccountError("처리 중 오류가 발생했습니다.");
+    } finally {
+      setAccountSubmitting(false);
+    }
   };
 
   // DateObject[] → "YYYY-MM-DD, ..." 콤마 문자열 (저장용)
@@ -159,12 +219,14 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
     const originalById = new Map<string, Agent>((agentList ?? []).map((a: Agent) => [a.id, a]));
     const isValidMonth = /^\d{4}-\d{2}$/.test(currentMonth);
 
-    const creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[] = [];
-    const updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[] = [];
-    const deletes: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[] = [];
+    type Entry = { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; isschedulemanager: boolean };
+    const creates: Entry[] = [];
+    const updates: (Entry & { id: string })[] = [];
+    const deletes: (Entry & { id: string })[] = [];
 
     data.forEach((row, rowIndex) => {
       if (!row.name && !row.job_level) return; // 아직 아무것도 입력 안 한 빈 새 행은 건너뜀
+      if (!isAdmin && row.id !== myAgentId) return; // 일반 직원은 본인 행만 저장 대상
 
       const original = row.id ? originalById.get(row.id) : undefined;
       const monthDescription = formatDateList(selectedDates[rowIndex]?.date);
@@ -182,6 +244,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
           original && isValidMonth
             ? mergeMonthDates(original.mandatory_workday, currentMonth, monthMandatoryworkday)
             : monthMandatoryworkday,
+        isschedulemanager: !!row.is_schedule_manager,
       };
 
       if (row.ischecked) {
@@ -191,6 +254,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
           !original ||
           row.name !== original.name ||
           row.job_level !== original.job_level ||
+          !!row.is_schedule_manager !== !!original.is_schedule_manager ||
           !sameDateString(entry.description, original.description) ||
           !sameDateString(entry.annualleave, original.annualleave) ||
           !sameDateString(entry.mandatoryworkday, original.mandatory_workday);
@@ -365,6 +429,8 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
 
   return (
     <div>
+      {/* 매장 전체 설정(필수 조건/점장 휴무 방식/보조직무)은 관리자에게만 보인다 */}
+      {isAdmin && (<>
       <table className='table-style'>
         <colgroup>
           {colWidthSetSchedule2.map((width, colIndex) => (
@@ -453,6 +519,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
         </table>
       </div>
       <div style={{ height: "20px" }}></div> {/* 여백 추가 */}
+      </>)}
       {/* 직원 표: <table>의 table-layout:fixed + colgroup 조합이 특정 칸에서 지정한 width를 무시하고
           훨씬 좁게 렌더하는, 재현 원인을 특정 못 한 문제가 있어 이 표만 CSS Grid 로 전환했다.
           grid-template-columns 는 지정한 px 값이 예외 없이 그대로 트랙 너비가 되어 이런 모호함이 없다.
@@ -460,37 +527,52 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
           가로 스크롤로 본다(표 전용 스크롤을 따로 두면 창 스크롤과 겹쳐 오른쪽이 잘려 보였다). */}
       <div
         className="emp-grid"
-        style={{ gridTemplateColumns: `40px ${columnWidths.map((w) => `${w}px`).join(' ')}` }}
+        style={{
+          gridTemplateColumns: isAdmin
+            ? `40px ${columnWidths.map((w) => `${w}px`).join(' ')} 80px 110px`
+            : columnWidths.map((w) => `${w}px`).join(' '),
+        }}
       >
-        <div className="emp-grid-cell emp-grid-header">
-          <input
-            type="checkbox"
-            onChange={(e) => handleHeaderCheckboxChange(e.target.checked)}
-          />
-        </div>
+        {isAdmin && (
+          <div className="emp-grid-cell emp-grid-header">
+            <input
+              type="checkbox"
+              onChange={(e) => handleHeaderCheckboxChange(e.target.checked)}
+            />
+          </div>
+        )}
         {headerNames.map((name, colIndex) => (
           <div key={colIndex} className="emp-grid-cell emp-grid-header">
             {name}
           </div>
         ))}
+        {isAdmin && (
+          <>
+            <div className="emp-grid-cell emp-grid-header" title="직무와 무관하게 매장 관리자 권한 부여">휴무 관리</div>
+            <div className="emp-grid-cell emp-grid-header">계정</div>
+          </>
+        )}
 
         {data.map((row, rowIndex) => {
           const altClass = rowIndex % 2 === 1 ? ' emp-grid-alt' : '';
           return (
             <React.Fragment key={rowIndex}>
-              <div className={`emp-grid-cell${altClass}`}>
-                <input
-                  type="checkbox"
-                  checked={row.ischecked}
-                  onChange={(e) => handleCheckboxChange(rowIndex, e.target.checked)}
-                />
-              </div>
+              {isAdmin && (
+                <div className={`emp-grid-cell${altClass}`}>
+                  <input
+                    type="checkbox"
+                    checked={row.ischecked}
+                    onChange={(e) => handleCheckboxChange(rowIndex, e.target.checked)}
+                  />
+                </div>
+              )}
               {['name', 'job_level', 'description', 'annualleave', 'mandatory_workday'].map((field, colIndex) => (
                 <div key={colIndex} className={`emp-grid-cell${altClass}`}>
                   {field === "job_level" ? (
                     <select
                       value={row[field as keyof Agent] as string}
                       onChange={(e) => handleInputChange(rowIndex, field as keyof Agent, e.target.value)}
+                      disabled={!canEditField(row, field)}
                     >
                       <option value="">직무를 선택하세요</option>
                       <option value="점장">점장</option>
@@ -509,7 +591,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
                       onClose={() => handleDatePickerClose(rowIndex)}
                       value={selectedDates[rowIndex]?.date || []}
                       multiple
-                      readOnly={!editableColumns[colIndex]}
+                      readOnly={!canEditField(row, field)}
                       format="MM/DD"
                       calendarPosition="bottom-center"
                       currentDate={pickerMonth}
@@ -522,7 +604,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
                       onClose={() => handle_AN_DatePickerClose(rowIndex)}
                       value={selectedAnnualleave[rowIndex]?.date || []}
                       multiple
-                      readOnly={!editableColumns[colIndex]}
+                      readOnly={!canEditField(row, field)}
                       format="MM/DD"
                       calendarPosition="bottom-center"
                       currentDate={pickerMonth}
@@ -535,7 +617,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
                       onClose={() => handleMW_DatePickerClose(rowIndex)}
                       value={selectedMandatoryWork[rowIndex]?.date || []}
                       multiple
-                      readOnly={!editableColumns[colIndex]}
+                      readOnly={!canEditField(row, field)}
                       format="MM/DD"
                       calendarPosition="bottom-center"
                       currentDate={pickerMonth}
@@ -546,7 +628,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
                       type="text"
                       value={row[field as keyof Agent] as string}
                       onChange={(e) => handleInputChange(rowIndex, field as keyof Agent, e.target.value)}
-                      readOnly={!editableColumns[colIndex]}
+                      readOnly={!canEditField(row, field)}
                     />
                   )}
                 </div>
@@ -554,6 +636,31 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
               <div className={`emp-grid-cell${altClass}`} style={{ justifyContent: 'center' }}>
                 {(annualLeaveUsage && annualLeaveUsage[row.id]) || 0}
               </div>
+              {isAdmin && (
+                <>
+                  <div className={`emp-grid-cell${altClass}`} style={{ justifyContent: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!row.is_schedule_manager}
+                      onChange={(e) =>
+                        setData((prev) =>
+                          prev.map((r, i) => (i === rowIndex ? { ...r, is_schedule_manager: e.target.checked ? 1 : 0 } : r))
+                        )
+                      }
+                    />
+                  </div>
+                  <div className={`emp-grid-cell${altClass}`} style={{ justifyContent: 'center' }}>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      disabled={!row.id}
+                      title={row.id ? '로그인 계정 생성 / 비밀번호 재설정' : '먼저 전체 저장으로 직원을 등록하세요'}
+                      onClick={() => openAccountModal(row.id, row.name)}
+                    >
+                      계정 설정
+                    </button>
+                  </div>
+                </>
+              )}
             </React.Fragment>
           );
         })}
@@ -567,18 +674,18 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
           marginTop: '10px', // 버튼 위쪽에 여백 추가
         }}>
         <div style={{ justifySelf: 'start' }}>
-          <button className="btn btn-secondary" onClick={addRow}> 인원 추가 </button>
+          {isAdmin && <button className="btn btn-secondary" onClick={addRow}> 인원 추가 </button>}
         </div>
         <div style={{ justifySelf: 'center', display: 'flex', gap: '10px' }}>
-          <button className="btn" onClick={handleSaveAll}> 전체 저장 </button>
-          {checkedRows.length > 0 && (
+          <button className="btn" onClick={handleSaveAll}> {isAdmin ? '전체 저장' : '내 정보 저장'} </button>
+          {isAdmin && checkedRows.length > 0 && (
             <button className="btn btn-danger" onClick={handleDeleteChecked}>
               선택 삭제 ({checkedRows.length})
             </button>
           )}
         </div>
         <div style={{ justifySelf: 'end' }}>
-          {onResetAll && (
+          {isAdmin && onResetAll && (
             <button className="btn btn-danger" onClick={onResetAll} disabled={isResetting}>
               전체 초기화
             </button>
@@ -623,6 +730,55 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
         }}>
           <button className="btn" onClick={handleConfirm}>확인</button>
           <button className="btn btn-secondary" onClick={handleCancel}>취소</button>
+        </div>
+      </Modal>
+
+      {/* 관리자 전용: 로그인 계정 생성 / 비밀번호 재설정 */}
+      <Modal
+        isOpen={!!accountModalAgent}
+        onRequestClose={closeAccountModal}
+        contentLabel="계정 설정"
+        style={{
+          overlay: { backgroundColor: 'rgba(0, 0, 0, 0.35)', zIndex: 1000 },
+          content: {
+            backgroundColor: 'white',
+            padding: '24px 20px',
+            borderRadius: '10px',
+            width: '300px',
+            height: 'auto',
+            margin: '0 auto',
+            top: '30%',
+            left: '0%',
+            bottom: 'auto',
+            boxShadow: '0 4px 10px rgba(0, 0, 0, 0.2)',
+          },
+        }}
+      >
+        <h2 style={{ fontSize: '17px', textAlign: 'center', marginTop: 0 }}>
+          {accountModalAgent?.name} 계정 설정
+        </h2>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <input
+            type="text"
+            placeholder="로그인 아이디 (비밀번호만 바꿀 땐 비워두기)"
+            value={accountLoginId}
+            onChange={(e) => setAccountLoginId(e.target.value)}
+            style={{ border: '1px solid #ccc', borderRadius: '6px', padding: '8px 10px' }}
+          />
+          <input
+            type="password"
+            placeholder="비밀번호 (8자 이상)"
+            value={accountPassword}
+            onChange={(e) => setAccountPassword(e.target.value)}
+            style={{ border: '1px solid #ccc', borderRadius: '6px', padding: '8px 10px' }}
+          />
+          {accountError && <div style={{ color: '#d93025', fontSize: '13px' }}>{accountError}</div>}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', marginTop: '20px' }}>
+          <button className="btn" onClick={handleAccountSubmit} disabled={accountSubmitting}>
+            {accountSubmitting ? '저장 중...' : '저장'}
+          </button>
+          <button className="btn btn-secondary" onClick={closeAccountModal}>취소</button>
         </div>
       </Modal>
     </div>

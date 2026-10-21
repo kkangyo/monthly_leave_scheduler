@@ -97,27 +97,34 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   // 표 전체 일괄 저장: 신규 추가/기존 수정/삭제 체크된 행을 한 번에 서버에 반영하고 마지막에 한 번만 목록을 새로고침
+  type BulkEntry = {
+    name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string;
+    isschedulemanager?: boolean;
+  };
   const handleBulkSaveAgents = async (
-    creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[],
-    updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[],
-    deletes: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[]
+    creates: BulkEntry[],
+    updates: (BulkEntry & { id: string })[],
+    deletes: (BulkEntry & { id: string })[]
   ) => {
     const errors: string[] = [];
+    // 서버는 이제 400 외에도 403(권한 없음) 등을 msg 와 함께 돌려준다
+    const collect = (name: string, result: any) => {
+      if (!result?.statusCode || result.statusCode < 400) return;
+      const msg = result.detail?.[0]?.constraints?.isLength ?? result.msg ?? '저장 실패';
+      errors.push(`[${name}] ${msg}`);
+    };
 
     for (const c of creates) {
-      const { name, joblevel, description, annualleave, mandatoryworkday } = c;
-      const result = await agentAPI.createAgentinfo({ name, joblevel, description, annualleave, mandatoryworkday });
-      if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
+      const { name, joblevel, description, annualleave, mandatoryworkday, isschedulemanager } = c;
+      collect(name, await agentAPI.createAgentinfo({ name, joblevel, description, annualleave, mandatoryworkday, isschedulemanager }));
     }
     for (const u of updates) {
-      const { id, name, joblevel, description, annualleave, mandatoryworkday } = u;
-      const result = await agentAPI.updateAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday });
-      if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
+      const { id, name, joblevel, description, annualleave, mandatoryworkday, isschedulemanager } = u;
+      collect(name, await agentAPI.updateAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday, isschedulemanager }));
     }
     for (const d of deletes) {
       const { id, name, joblevel, description, annualleave, mandatoryworkday } = d;
-      const result = await agentAPI.deleteAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday });
-      if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
+      collect(name, await agentAPI.deleteAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday }));
     }
 
     await syncAgentList();
