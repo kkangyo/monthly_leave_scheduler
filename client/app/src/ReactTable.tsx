@@ -22,9 +22,11 @@ Modal.setAppElement('#root');
 interface TableProps {
   onResetAll?: () => void; // 전체 초기화(스케줄·휴일 입력) 버튼 클릭 핸들러 — App.tsx 소유 로직
   isResetting?: boolean; // 초기화 진행 중이면 버튼 비활성화
+  // 저장 안 한 변경이 있는지 묻는 함수를 부모(App)에 넘겨줌 — 설정 창에서 달을 바꾸기 전에 확인용
+  dirtyCheckRef?: React.MutableRefObject<(() => boolean) | null>;
 }
 
-const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
+const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef }) => {
   const {
     agentList,
     selectedDates,
@@ -44,14 +46,14 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
     setSelectedSubjob1,
     setSelectedSubjob2,
     annualLeaveUsage,
-    currentMonth,
+    settingsMonth,
   } = useAgent();
 
-  // 표의 DatePicker 들이 열릴 때 처음 보여줄 달을 메인 달력의 달(currentMonth 'YYYY-MM')과 맞춘다.
+  // 표의 DatePicker 들이 열릴 때 처음 보여줄 달을 설정 창에서 고른 달(settingsMonth 'YYYY-MM')과 맞춘다.
   // (지정하지 않으면 선택된 날짜가 없는 칸은 오늘이 속한 달로 열린다)
   const pickerMonth = useMemo(
-    () => (/^\d{4}-\d{2}$/.test(currentMonth) ? new DateObject(`${currentMonth}-01`) : undefined),
-    [currentMonth]
+    () => (/^\d{4}-\d{2}$/.test(settingsMonth) ? new DateObject(`${settingsMonth}-01`) : undefined),
+    [settingsMonth]
   );
 
   const [data, setData] = useState<Agent[]>([]); // Agent[] 타입으로 초기화
@@ -153,11 +155,11 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
     return [...keepOtherMonths, ...thisMonth].sort().join(', ');
   };
 
-  // 표 전체 일괄 저장: 각 행을 현재 날짜 선택 상태(selectedDates 등) 기준으로 신규/수정/삭제로 분류해 한 번에 반영.
+  // 각 행을 현재 날짜 선택 상태(selectedDates 등) 기준으로 신규/수정/삭제로 분류.
   //  기존 직원(id 있음)은 원본(agentList)과 비교해 실제로 값이 바뀐 행만 '수정'으로 포함한다.
-  const handleSaveAll = () => {
+  const collectChanges = () => {
     const originalById = new Map<string, Agent>((agentList ?? []).map((a: Agent) => [a.id, a]));
-    const isValidMonth = /^\d{4}-\d{2}$/.test(currentMonth);
+    const isValidMonth = /^\d{4}-\d{2}$/.test(settingsMonth);
 
     const creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[] = [];
     const updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[] = [];
@@ -175,12 +177,12 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
         name: row.name,
         joblevel: row.job_level,
         description:
-          original && isValidMonth ? mergeMonthDates(original.description, currentMonth, monthDescription) : monthDescription,
+          original && isValidMonth ? mergeMonthDates(original.description, settingsMonth, monthDescription) : monthDescription,
         annualleave:
-          original && isValidMonth ? mergeMonthDates(original.annualleave, currentMonth, monthAnnualleave) : monthAnnualleave,
+          original && isValidMonth ? mergeMonthDates(original.annualleave, settingsMonth, monthAnnualleave) : monthAnnualleave,
         mandatoryworkday:
           original && isValidMonth
-            ? mergeMonthDates(original.mandatory_workday, currentMonth, monthMandatoryworkday)
+            ? mergeMonthDates(original.mandatory_workday, settingsMonth, monthMandatoryworkday)
             : monthMandatoryworkday,
       };
 
@@ -199,6 +201,20 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting }) => {
         creates.push(entry);
       }
     });
+
+    return { creates, updates, deletes };
+  };
+
+  if (dirtyCheckRef) {
+    dirtyCheckRef.current = () => {
+      const { creates, updates, deletes } = collectChanges();
+      return creates.length + updates.length + deletes.length > 0;
+    };
+  }
+
+  // 표 전체 일괄 저장: 신규/수정/삭제를 한 번에 반영
+  const handleSaveAll = () => {
+    const { creates, updates, deletes } = collectChanges();
 
     if (creates.length + updates.length + deletes.length === 0) {
       alert('저장할 변경 사항이 없습니다.');

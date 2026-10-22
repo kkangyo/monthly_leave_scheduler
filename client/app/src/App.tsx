@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Modal from "react-modal";
 import { useAgent } from "./hooks/useAgentinfo";
 import "./App.css";
@@ -19,6 +19,12 @@ export interface Agentinfo {
 const DEFAULT_EVENT_COLOR = "#ffffff";
 const SELECTED_EVENT_COLOR = "#1a73e8";
 
+// 'YYYY-MM' → 'YYYY년 M월'
+const formatMonthLabel = (month: string) => {
+  const [y, m] = month.split("-");
+  return y && m ? `${y}년 ${Number(m)}월` : month;
+};
+
 function App() {
   const {
     agentList,
@@ -32,6 +38,8 @@ function App() {
     annualLeaveList,
     mandatoryWorkList,
     currentMonth,
+    settingsMonth,
+    setSettingsMonth,
     monthlySchedule,
     confirmSchedule,
     resetMonthlyScheduleTable,
@@ -53,6 +61,30 @@ function App() {
   const [selectedEmployee, setSelectedEmployee] = useState<string | null>(null);
   // 설정 창(직원/필수 조건/보조직무 표) 표시 여부
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // 설정 표에 저장 안 한 변경이 있는지 확인하는 함수 (Table 이 채워줌)
+  const settingsDirtyCheckRef = useRef<(() => boolean) | null>(null);
+
+  // 설정 창은 항상 메인 달력의 달로 열린다
+  const openSettings = () => {
+    setSettingsMonth(currentMonth);
+    setIsSettingsOpen(true);
+  };
+
+  // 설정 창의 달 변경 ('YYYY-MM'). 저장 안 한 입력이 있으면 사라지므로 먼저 확인
+  const changeSettingsMonth = (month: string) => {
+    if (!/^\d{4}-\d{2}$/.test(month) || month === settingsMonth) return;
+    if (
+      settingsDirtyCheckRef.current?.() &&
+      !window.confirm(`${formatMonthLabel(settingsMonth)} 에 저장하지 않은 변경 사항이 있습니다.\n달을 바꾸면 사라집니다. 계속할까요?`)
+    ) return;
+    setSettingsMonth(month);
+  };
+  const shiftSettingsMonth = (delta: number) => {
+    if (!/^\d{4}-\d{2}$/.test(settingsMonth)) return;
+    const [y, m] = settingsMonth.split("-").map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    changeSettingsMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  };
 
   useEffect(() => {
     if (agentList) {
@@ -1069,7 +1101,7 @@ function App() {
         <button className="btn" onClick={confirmGeneratedSchedule} disabled={isConfirming || generatedLeaves.length === 0}>
           {isConfirming ? '확정 중...' : '확정'}
         </button>
-        <button className="btn btn-secondary" onClick={() => setIsSettingsOpen(true)} title="설정">
+        <button className="btn btn-secondary" onClick={openSettings} title="설정">
           ⚙ 설정
         </button>
       </div>
@@ -1100,7 +1132,9 @@ function App() {
         }}
       >
         <div style={{ position: 'relative', marginBottom: '10px' }}>
-          <h2 style={{ margin: 0, textAlign: 'center' }}>설정</h2>
+          <h2 style={{ margin: 0, textAlign: 'center' }}>
+            {settingsMonth ? `${formatMonthLabel(settingsMonth)} ` : ''}설정
+          </h2>
           <button
             className="btn btn-secondary"
             style={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)' }}
@@ -1109,7 +1143,32 @@ function App() {
             닫기
           </button>
         </div>
-        <Table onResetAll={resetScheduleTable} isResetting={isConfirming} />
+        {/* 설정 창에서 볼/수정할 달 선택 (메인 달력의 달은 바뀌지 않음) */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '8px',
+            marginBottom: '14px',
+          }}
+        >
+          <button className="btn btn-secondary btn-sm" onClick={() => shiftSettingsMonth(-1)} title="이전 달">‹</button>
+          <input
+            type="month"
+            value={settingsMonth}
+            onChange={(e) => changeSettingsMonth(e.target.value)}
+            style={{ padding: '4px 8px', fontSize: '14px', border: '1px solid #ccc', borderRadius: '6px' }}
+          />
+          <button className="btn btn-secondary btn-sm" onClick={() => shiftSettingsMonth(1)} title="다음 달">›</button>
+          {settingsMonth !== currentMonth && (
+            <button className="btn btn-secondary btn-sm" onClick={() => changeSettingsMonth(currentMonth)}>
+              달력 달로 ({formatMonthLabel(currentMonth)})
+            </button>
+          )}
+        </div>
+        <Table onResetAll={resetScheduleTable} isResetting={isConfirming} dirtyCheckRef={settingsDirtyCheckRef} />
       </Modal>
     </div>
   );

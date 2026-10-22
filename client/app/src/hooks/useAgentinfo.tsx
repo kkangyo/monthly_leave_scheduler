@@ -46,6 +46,9 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
   const [selectedSubjob1, setSelectedSubjob1] = useState<string[]>([]);
   const [selectedSubjob2, setSelectedSubjob2] = useState<string[]>([]);
   const [currentMonth, setCurrentMonth] = useState<string>(""); // 초기값 현재 달
+  // 설정 창(⚙ 설정)에서 보고/수정 중인 달 'YYYY-MM'. 평소엔 currentMonth 를 따라가고, 설정 창 안에서만 따로 바꿀 수 있다
+  //  (메인 달력의 달은 그대로 둔다). 설정 표의 날짜 칸·누적 사용 연차는 이 달 기준.
+  const [settingsMonth, setSettingsMonth] = useState<string>("");
   const [annualLeaveUsage, setAnnualLeaveUsage] = useState<{ [agentId: string]: number }>({}); // 인원별 누적 사용 연차
   // 현재 보고 있는 달의 확정 휴일/연차 (서버 저장본)
   const [monthlySchedule, setMonthlySchedule] = useState<
@@ -197,9 +200,9 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     const selectedMWDatesMapping: { [key: number]: {name:string; date:DateObject[]} } = {};
     const selectedmandatoryworkMapping:EventInput[] = [];
 
-    // 설정 표(DatePicker)에는 지금 보고 있는 달('YYYY-MM')의 값만 보여준다 — 없으면 빈칸, 있으면 그 달 값만.
-    //  달을 바꿀 때마다 이 값도 다시 계산되도록 아래 useEffect 의존성 배열에 currentMonth 를 넣어뒀다.
-    const monthPrefix = /^\d{4}-\d{2}$/.test(currentMonth) ? `${currentMonth}-` : null;
+    // 설정 표(DatePicker)에는 설정 창에서 보고 있는 달(settingsMonth 'YYYY-MM')의 값만 보여준다 — 없으면 빈칸, 있으면 그 달 값만.
+    //  달을 바꿀 때마다 이 값도 다시 계산되도록 아래 useEffect 의존성 배열에 settingsMonth 를 넣어뒀다.
+    const monthPrefix = /^\d{4}-\d{2}$/.test(settingsMonth) ? `${settingsMonth}-` : null;
 
     if(agentList){
       const filteredinfo = agentList.map(({id, ...rest}) => rest); // id를 제외한 데이터로 변환
@@ -274,15 +277,22 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
 
   useEffect(() => {
     setSelectedDateList();
-  }, [agentList, currentMonth]);
+  }, [agentList, settingsMonth]);
 
-  // 달력에서 보고 있는 달이 바뀌면 그 달의 확정 저장본과 그 달까지의 누적 사용 연차를 다시 조회
+  // 달력에서 보고 있는 달이 바뀌면 그 달의 확정 저장본을 다시 조회하고, 설정 창의 달도 그 달로 맞춘다
   useEffect(() => {
     if (currentMonth && /^\d{4}-\d{2}$/.test(currentMonth)) {
       fetchMonthlySchedule(currentMonth);
-      fetchAnnualLeaveUsage(currentMonth);
     }
+    setSettingsMonth(currentMonth);
   }, [currentMonth]);
+
+  // 설정 창의 달이 바뀌면 그 달까지의 누적 사용 연차를 다시 조회
+  useEffect(() => {
+    if (settingsMonth && /^\d{4}-\d{2}$/.test(settingsMonth)) {
+      fetchAnnualLeaveUsage(settingsMonth);
+    }
+  }, [settingsMonth]);
 
   // 앱 시작 시 서버에 저장된 설정(보조직무 / 필수 근무 조건)을 불러와 적용
   useEffect(() => {
@@ -339,6 +349,8 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         selectedSubjob1,
         selectedSubjob2,
         currentMonth,
+        settingsMonth,
+        setSettingsMonth,
         annualLeaveUsage,
         fetchAnnualLeaveUsage,
         monthlySchedule,
