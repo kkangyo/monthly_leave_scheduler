@@ -1143,7 +1143,7 @@ function App() {
             닫기
           </button>
         </div>
-        {/* 설정 창에서 볼/수정할 달 선택 (메인 달력의 달은 바뀌지 않음) */}
+        {/* 설정 창에서 볼/수정할 달 선택 (메인 달력도 같은 달로 이동) */}
         <div
           style={{
             display: 'flex',
@@ -1162,11 +1162,6 @@ function App() {
             style={{ padding: '4px 8px', fontSize: '14px', border: '1px solid #ccc', borderRadius: '6px' }}
           />
           <button className="btn btn-secondary btn-sm" onClick={() => shiftSettingsMonth(1)} title="다음 달">›</button>
-          {settingsMonth !== currentMonth && (
-            <button className="btn btn-secondary btn-sm" onClick={() => changeSettingsMonth(currentMonth)}>
-              달력 달로 ({formatMonthLabel(currentMonth)})
-            </button>
-          )}
         </div>
         <Table onResetAll={resetScheduleTable} isResetting={isConfirming} dirtyCheckRef={settingsDirtyCheckRef} />
       </Modal>

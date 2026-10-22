@@ -46,8 +46,8 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
   const [selectedSubjob1, setSelectedSubjob1] = useState<string[]>([]);
   const [selectedSubjob2, setSelectedSubjob2] = useState<string[]>([]);
   const [currentMonth, setCurrentMonth] = useState<string>(""); // 초기값 현재 달
-  // 설정 창(⚙ 설정)에서 보고/수정 중인 달 'YYYY-MM'. 평소엔 currentMonth 를 따라가고, 설정 창 안에서만 따로 바꿀 수 있다
-  //  (메인 달력의 달은 그대로 둔다). 설정 표의 날짜 칸·누적 사용 연차는 이 달 기준.
+  // 설정 창(⚙ 설정)에서 보고/수정 중인 달 'YYYY-MM'. 달력 달이 바뀌면 따라가고, 설정 창에서 바꾸면
+  //  MyCalendar 가 메인 달력도 그 달로 이동시킨다. 설정 표의 날짜 칸·누적 사용 연차는 이 달 기준.
   const [settingsMonth, setSettingsMonth] = useState<string>("");
   const [annualLeaveUsage, setAnnualLeaveUsage] = useState<{ [agentId: string]: number }>({}); // 인원별 누적 사용 연차
   // 현재 보고 있는 달의 확정 휴일/연차 (서버 저장본)

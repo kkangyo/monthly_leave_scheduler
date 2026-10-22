@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -36,7 +36,15 @@ const MyCalendar: React.FC<MyCalendarProps> = ({
   onDateClick,
   renderDayExtra,
 }) => {
-  const { setCurrentMonth } = useAgent();
+  const { currentMonth, setCurrentMonth, settingsMonth } = useAgent();
+  const calendarRef = useRef<FullCalendar>(null);
+
+  // 설정 창에서 달을 바꾸면 메인 달력도 그 달로 이동 (이동 후 datesSet → currentMonth 갱신)
+  useEffect(() => {
+    if (!/^\d{4}-\d{2}$/.test(settingsMonth) || settingsMonth === currentMonth) return;
+    calendarRef.current?.getApi().gotoDate(`${settingsMonth}-01`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsMonth]);
   // 날짜별 "인원 추가" 위젯을 꽂을 실제 DOM 노드 (휴무 목록 뒤에 이어 붙임, dayCellDidMount 에서 확보)
   const [extraEls, setExtraEls] = useState<Record<string, HTMLDivElement>>({});
 
@@ -95,6 +103,7 @@ const MyCalendar: React.FC<MyCalendarProps> = ({
     <div className="calendar-scroll">
     <div className="optimized_calendar">
       <FullCalendar
+        ref={calendarRef}
         plugins={[dayGridPlugin, interactionPlugin]}
         initialView="dayGridMonth"
         headerToolbar={{
