@@ -39,6 +39,10 @@ class AgentinfoHTTP {
     return await this.instance.get(`/apis/agentinfo/schedule?month=${month}`);
   }
 
+  async getHolidays() {
+    return await this.instance.get("/apis/holiday");
+  }
+
   async getSettings() {
     return await this.instance.get("/apis/agentinfo/settings");
   }

@@ -118,3 +118,9 @@ body {
 .optimized_calendar .fc-toolbar-chunk:nth-child(2) > * {
   margin: 0;
 }
+/* 월 텍스트 칸 너비 고정 (가장 긴 "September 2026" 기준) — 달마다 글자 길이가 달라도 [<] [>] 버튼 위치가 안 움직이게 */
+.optimized_calendar .fc-toolbar-title {
+  width: 9em;
+  text-align: center;
+  white-space: nowrap;
+}

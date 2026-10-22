@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from "r
 import agentAPI from "../apis/agent";
 import { DateObject } from 'react-multi-date-picker'; // DateObject를 임포트
 import { EventInput } from '@fullcalendar/core';
+import { HolidayMap } from "../koreanHolidays";
 
 // Context 생성
 const AgentContext = createContext<any>(null);
@@ -55,6 +56,9 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     { agentId: string; name: string; jobLevel: string; date: string; type: "leave" | "annual" | "comp" }[]
   >([]);
   const appSettingsLoadedRef = useRef(false); // 서버 설정 최초 로드 완료 여부
+  // 한국 공휴일 (작년~내년, 서버가 매월 공공데이터 API 로 갱신) — 받기 전엔 휴무 생성을 막는다
+  const [holidays, setHolidays] = useState<HolidayMap>({});
+  const [holidaysLoaded, setHolidaysLoaded] = useState(false);
 
   const handleCreateAgent = async (
     name: string, joblevel: string, description: string, annualleave: string, mandatoryworkday: string
@@ -294,6 +298,20 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, [settingsMonth]);
 
+  // 앱 시작 시 공휴일 조회 (실패하면 공휴일 없이 진행)
+  useEffect(() => {
+    (async () => {
+      try {
+        const result = await agentAPI.getHolidays();
+        setHolidays(result?.holidays ?? {});
+      } catch (err) {
+        console.error("getHolidays error", err);
+      } finally {
+        setHolidaysLoaded(true);
+      }
+    })();
+  }, []);
+
   // 앱 시작 시 서버에 저장된 설정(보조직무 / 필수 근무 조건)을 불러와 적용
   useEffect(() => {
     (async () => {
@@ -353,6 +371,8 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         setSettingsMonth,
         annualLeaveUsage,
         fetchAnnualLeaveUsage,
+        holidays,
+        holidaysLoaded,
         monthlySchedule,
         fetchMonthlySchedule,
         confirmSchedule,

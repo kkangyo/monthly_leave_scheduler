@@ -9,6 +9,8 @@ const PORT = process.env.PORT || 8000;
 
 import agentinfo from './src/apis/agentinfo';
 import AgentinfoRepository from './src/model/agentinfoRepository';
+import holiday from './src/apis/holiday';
+import HolidayRepository from './src/model/holidayRepository';
 
 app.use(cors());
 
@@ -20,11 +22,18 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.error('ensureAgentSchema failed', err);
   }
+  // 공휴일 테이블이 없으면 생성
+  try {
+    await new HolidayRepository().ensureHolidaySchema();
+  } catch (err) {
+    console.error('ensureHolidaySchema failed', err);
+  }
 });
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use('/apis/agentinfo', agentinfo);
+app.use('/apis/holiday', holiday);
 
 export = app;

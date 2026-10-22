@@ -8,7 +8,6 @@ import MyCalendar from "./MyCalendar";
 import { EventInput, EventDropArg, EventClickArg, EventContentArg } from "@fullcalendar/core";
 import { DateClickArg } from "@fullcalendar/interaction";
 import Table from "./ReactTable";
-import { KOREAN_HOLIDAYS } from "./koreanHolidays";
 
 export interface Agentinfo {
   name: string;
@@ -43,6 +42,8 @@ function App() {
     monthlySchedule,
     confirmSchedule,
     resetMonthlyScheduleTable,
+    holidays,
+    holidaysLoaded,
   } = useAgent();
 
   const [agentData, setAgentData] = useState<Agentinfo[]>([]);
@@ -147,7 +148,7 @@ function App() {
     const alteroffday: number[] = [];
     // 한국 공휴일 자동 반영: 설날·추석 '당일' → 전체 휴무 / 그 외 공휴일 → 근무 + 대체휴무 크레딧
     for (let day = 1; day <= daysInMonth; day++) {
-      const holidayName = KOREAN_HOLIDAYS[dateOf(day)];
+      const holidayName = holidays[dateOf(day)];
       if (!holidayName) continue;
       if (holidayName === "설날" || holidayName === "추석") {
         if (!offday.includes(day)) offday.push(day);
@@ -1097,7 +1098,9 @@ function App() {
       />
       <div style={{ height: "10px" }}></div>
       <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '10px', marginBottom: '30px' }}>
-        <button className="btn btn-secondary" onClick={genSch}> 휴무 생성 </button>
+        <button className="btn btn-secondary" onClick={genSch} disabled={!holidaysLoaded}>
+          {holidaysLoaded ? ' 휴무 생성 ' : '공휴일 불러오는 중...'}
+        </button>
         <button className="btn" onClick={confirmGeneratedSchedule} disabled={isConfirming || generatedLeaves.length === 0}>
           {isConfirming ? '확정 중...' : '확정'}
         </button>

@@ -33,3 +33,11 @@ CREATE TABLE IF NOT EXISTS `app_settings` (
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`setting_key`)
 );
+
+-- 한국 공휴일 (공공데이터포털 특일 정보 API 로 매월 첫 요청 시 갱신, 작년~내년만 보관)
+CREATE TABLE IF NOT EXISTS `public_holidays` (
+  `holiday_date` DATE NOT NULL,
+  `name` VARCHAR(64) NOT NULL,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`holiday_date`)
+);

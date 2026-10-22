@@ -36,7 +36,7 @@ const MyCalendar: React.FC<MyCalendarProps> = ({
   onDateClick,
   renderDayExtra,
 }) => {
-  const { currentMonth, setCurrentMonth, settingsMonth } = useAgent();
+  const { currentMonth, setCurrentMonth, settingsMonth, holidays } = useAgent();
   const calendarRef = useRef<FullCalendar>(null);
 
   // 설정 창에서 달을 바꾸면 메인 달력도 그 달로 이동 (이동 후 datesSet → currentMonth 갱신)
@@ -59,11 +59,11 @@ const MyCalendar: React.FC<MyCalendarProps> = ({
 
   // 공휴일 셀에 클래스 추가 (배경/글자색은 CSS 에서 처리)
   const dayCellClassNames = (arg: DayCellContentArg) =>
-    getHolidayName(arg.date) ? ["kr-holiday"] : [];
+    getHolidayName(holidays, arg.date) ? ["kr-holiday"] : [];
 
   // 날짜 숫자 + (공휴일이면) 공휴일 이름만 표시 (상단 영역). 인원 추가 위젯은 포털로 하단에 별도 표시.
   const dayCellContent = (arg: DayCellContentArg) => {
-    const name = getHolidayName(arg.date);
+    const name = getHolidayName(holidays, arg.date);
     return (
       <div className="kr-day-cell">
         <span className="kr-day-num">{arg.dayNumberText}</span>
