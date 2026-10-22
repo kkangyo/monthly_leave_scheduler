@@ -7,16 +7,18 @@ import "./styles.css";
 import MyCalendar from "./MyCalendar";
 import { EventInput, EventDropArg, EventClickArg, EventContentArg } from "@fullcalendar/core";
 import { DateClickArg } from "@fullcalendar/interaction";
-import Table from "./ReactTable";
+import Table, { DEFAULT_LEAVE_DAYS } from "./ReactTable";
 
 export interface Agentinfo {
   name: string;
   job_level: string;
+  leave_days?: number | string; // 인원별 한 달 휴무 일수(연차 제외), 없으면 DEFAULT_LEAVE_DAYS
 }
 
 // 달력 이벤트 색상: 기본은 전원 흰색(테두리 없음), 클릭으로 선택된 인원만 강조색
 const DEFAULT_EVENT_COLOR = "#ffffff";
 const SELECTED_EVENT_COLOR = "#1a73e8";
+const ANNUAL_EVENT_COLOR = "#ffe0b2"; // 연차는 옅은 주황 (선택된 인원이면 강조색이 우선)
 
 // 'YYYY-MM' → 'YYYY년 M월'
 const formatMonthLabel = (month: string) => {
@@ -125,7 +127,14 @@ function App() {
     const dateOf = (day: number) => `${targetYear}-${pad2(targetMonth)}-${pad2(day)}`;
 
     //#################### 0-1. 필수 근무 조건
-    const maxLeavesPerEmployee = scheduleEssentialWork[0]; // 직원당 의무 휴무 일수 (연차 제외)
+    // 인원별 의무 휴무 일수 (연차 제외) — 설정 창 직원 표의 '휴무 일수'(leave_days, 기본 8)
+    const baseLeavesByName: { [name: string]: number } = {};
+    agentData.forEach((emp) => {
+      const n = Number(emp.leave_days);
+      baseLeavesByName[emp.name] =
+        emp.leave_days !== "" && emp.leave_days != null && Number.isInteger(n) && n >= 0 ? n : DEFAULT_LEAVE_DAYS;
+    });
+    const baseQuotaOf = (name: string) => baseLeavesByName[name] ?? DEFAULT_LEAVE_DAYS;
     const weekdayWorkers = scheduleEssentialWork[1];       // 평일 목표 근무 인원
     const weekendWorkers = weekdayWorkers + 1;             // 주말은 평일 +1
     const minSeniors = scheduleEssentialWork[2];           // 하루 최소 책임급(점장·매니저·부점장) 인원
@@ -221,7 +230,7 @@ function App() {
     //  단계(2-2·5-1)에서는 "이 사람이 최대로 받을 수 있는 크레딧"까지만 가정한 상한을 쓴다.
     //  실제 크레딧은 이 상한보다 항상 작거나 같으므로, 이 상한을 지키면 나중에 quotaOf 를 절대 넘지 않는다.
     const hardCapFor = (emp: Agentinfo): number =>
-      directorExempt(emp) ? maxLeavesPerEmployee : maxLeavesPerEmployee + alteroffday.length;
+      directorExempt(emp) ? baseQuotaOf(emp.name) : baseQuotaOf(emp.name) + alteroffday.length;
 
     //#################### 1. 사전 확정 휴무 (결정적: 모든 시도에서 동일)
     //  - leaveList        : 직원 신청 휴무   → 의무 휴무 카운트에 포함
@@ -360,7 +369,7 @@ function App() {
         const candidates = agentData.filter(
           (emp) =>
             !directorExempt(emp) &&
-            leaveCounter[emp.name] < maxLeavesPerEmployee &&
+            leaveCounter[emp.name] < baseQuotaOf(emp.name) &&
             !employeeleaveSchedule[emp.name].includes(date) &&
             !isMandatoryWork(emp.name, date) &&
             spacingOk(emp.name, day)
@@ -400,7 +409,7 @@ function App() {
         const baseCandidates = agentData.filter(
           (emp) =>
             !directorExempt(emp) &&
-            leaveCounter[emp.name] < maxLeavesPerEmployee &&
+            leaveCounter[emp.name] < baseQuotaOf(emp.name) &&
             !employeeleaveSchedule[emp.name].includes(date) &&
             !isMandatoryWork(emp.name, date) &&
             spacingOk(emp.name, day)
@@ -481,7 +490,7 @@ function App() {
                     !tried.has(emp.name) &&
                     !offDutyEmployees[date].includes(emp.name) &&
                     !isMandatoryWork(emp.name, date) &&
-                    leaveCounter[emp.name] < maxLeavesPerEmployee &&
+                    leaveCounter[emp.name] < baseQuotaOf(emp.name) &&
                     spacingOk(emp.name, day)
                 )
                 // 휴무가 적은 사람 → 기존 휴무와 멀리 떨어진 날 우선
@@ -514,7 +523,7 @@ function App() {
       agentData.forEach((emp) => {
         holidayCredit[emp.name] = directorExempt(emp) ? 0 : holidayCreditFor(emp.name, employeeleaveSchedule);
       });
-      const quotaOf = (name: string) => maxLeavesPerEmployee + (holidayCredit[name] || 0);
+      const quotaOf = (name: string) => baseQuotaOf(name) + (holidayCredit[name] || 0);
 
       //#################### 5. 의무 휴무(+대체 휴무) 미달 인원 배치 (점장 제외)
       //  기존 휴무와 가장 멀고 그 날 휴무자가 적은 날부터. 1차는 최소 간격 준수, 못 채우면 간격 완화(≥2).
@@ -702,7 +711,7 @@ function App() {
       agentData.forEach((emp) => {
         if (directorExempt(emp)) return;
         const credit = holidayCreditFor(emp.name, st.employeeleaveSchedule);
-        const diff = st.leaveCounter[emp.name] - (maxLeavesPerEmployee + credit);
+        const diff = st.leaveCounter[emp.name] - (baseQuotaOf(emp.name) + credit);
         if (diff < 0) penalty += -diff * 1000; // 미달(대체휴무 미부여 포함): 매우 나쁨
         else if (diff > 0) penalty += diff * 400; // 초과
       });
@@ -800,15 +809,15 @@ function App() {
       if (y === targetYear && m === targetMonth) annualKeySet.add(`${title}|${d}`);
     });
 
-    // 인원별 실제 대체휴무 쿼터(8 + 그 사람의 공휴일 크레딧) — 공휴일이 없는 달은 credit=0 이라 8 그대로.
+    // 인원별 실제 대체휴무 쿼터(그 사람의 휴무 일수 + 공휴일 크레딧) — 공휴일이 없는 달은 credit=0 이라 휴무 일수 그대로.
     //  점장은 directorFullQuota=false 면 크레딧 없음(directorExempt), 사전 확정 휴무일 외엔 배정도 안 됨.
     const finalQuotaOf = (name: string): number => {
       const emp = agentData.find((a) => a.name === name);
       const credit = emp && directorExempt(emp) ? 0 : holidayCreditFor(name, finalEmployeeLeaveSchedule);
-      return maxLeavesPerEmployee + credit;
+      return baseQuotaOf(name) + credit;
     };
 
-    // 인원별로 날짜순 누계: 연차 제외. 기본 의무 휴무일수(maxLeavesPerEmployee) 초과분 중에서도
+    // 인원별로 날짜순 누계: 연차 제외. 그 사람의 기본 의무 휴무일수(baseQuotaOf) 초과분 중에서도
     //  '그 사람의 공휴일 크레딧만큼만' 대체로 표시 — 크레딧을 넘어선 초과분(알고리즘이 어쩔 수 없이
     //  더 배정한 날, 예: 연속근무 4일 제한 때문에 강제로 쉰 날)은 공휴일과 무관하므로 그냥 '일반 휴무'.
     const obligatoryCount: { [key: string]: number } = {};
@@ -817,7 +826,7 @@ function App() {
         return { name, date, type: "annual" as const };
       }
       obligatoryCount[name] = (obligatoryCount[name] || 0) + 1;
-      const isComp = obligatoryCount[name] > maxLeavesPerEmployee && obligatoryCount[name] <= finalQuotaOf(name);
+      const isComp = obligatoryCount[name] > baseQuotaOf(name) && obligatoryCount[name] <= finalQuotaOf(name);
       const type = isComp ? ("comp" as const) : ("leave" as const);
       return { name, date, type };
     });
@@ -852,13 +861,17 @@ function App() {
       .filter((i) => i.date)
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((i) => {
-        // 기본은 전원 흰색, 달력에서 클릭으로 선택된 인원만 강조색으로 표시
+        // 기본은 전원 흰색(연차는 옅은 주황), 달력에서 클릭으로 선택된 인원만 강조색으로 표시
         const isSelected = !!selectedEmployee && i.name === selectedEmployee;
         const ltype = (i.type as "leave" | "comp" | "annual") || "leave";
         const common = {
           id: `${i.name}|${i.date}`,
           start: i.date,
-          backgroundColor: isSelected ? SELECTED_EVENT_COLOR : DEFAULT_EVENT_COLOR,
+          backgroundColor: isSelected
+            ? SELECTED_EVENT_COLOR
+            : ltype === "annual"
+              ? ANNUAL_EVENT_COLOR
+              : DEFAULT_EVENT_COLOR,
           borderColor: "transparent",
           textColor: isSelected ? "#ffffff" : "#333333",
           extendedProps: { name: i.name, ltype },

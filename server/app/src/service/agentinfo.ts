@@ -13,6 +13,13 @@ interface Response {
   msg: string;
 }
 
+// 월 휴무 일수: 숫자가 아니거나 범위를 벗어나면 기본 8일
+const DEFAULT_LEAVE_DAYS = 8;
+const normalizeLeaveDays = (value: unknown): number => {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 && n <= 31 ? n : DEFAULT_LEAVE_DAYS;
+};
+
 class Agentinfo {
   private readonly agentinfoRepository: AgentinfoRepository;
   readonly body;
@@ -30,6 +37,7 @@ class Agentinfo {
       description: body.description,
       annualleave: body.annualleave,
       mandatoryworkday: body.mandatoryworkday ?? '',
+      leavedays: normalizeLeaveDays(body.leavedays),
     };
 
     const commentId = await this.agentinfoRepository.createAgent(
@@ -41,7 +49,7 @@ class Agentinfo {
   }
   
   async updateAgentinfoById(agentinfoId: string): Promise<Response> {
-    const { name, joblevel, description, annualleave, mandatoryworkday }: AgentinfoDto =
+    const { name, joblevel, description, annualleave, mandatoryworkday, leavedays }: AgentinfoDto =
       this.body;
 
     const agentinfo = await this.agentinfoRepository.getAgentinfoById(
@@ -56,7 +64,8 @@ class Agentinfo {
       joblevel,
       description,
       annualleave,
-      mandatoryworkday ?? ''
+      mandatoryworkday ?? '',
+      normalizeLeaveDays(leavedays)
     );
 
     return { success: true, msg: 'Agent info update complete' };

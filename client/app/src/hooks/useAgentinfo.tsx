@@ -40,7 +40,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
   const [leaveList, setLeaveList] = useState<EventInput[]>([]);
   const [annualLeaveList, setAnnualLeaveList] = useState<EventInput[]>([]);
   const [mandatoryWorkList, setMandatoryWorkList] = useState<EventInput[]>([]);
-  // [1인당 휴일, 평일 근무 인원(주말 +1), 최소 책임급 수, 필수 1층 인원, 필수 2층 인원]
+  // [1인당 휴일(미사용 — 인원별 휴무 일수 leave_days 로 대체, 배열 순서 유지용), 평일 근무 인원(주말 +1), 최소 책임급 수, 필수 1층 인원, 필수 2층 인원]
   const [scheduleEssentialWork, setScheduleEssentialWork] = useState<number[]>([8,6,1,3,2]);
   // 점장 휴무 방식: false(기본) = 사전 확정 휴무일에만 쉼 / true = 다른 직원처럼 의무 휴무(1인당 휴일)까지 배정
   const [directorFullQuota, setDirectorFullQuota] = useState<boolean>(false);
@@ -105,25 +105,25 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
 
   // 표 전체 일괄 저장: 신규 추가/기존 수정/삭제 체크된 행을 한 번에 서버에 반영하고 마지막에 한 번만 목록을 새로고침
   const handleBulkSaveAgents = async (
-    creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[],
-    updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[],
-    deletes: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[]
+    creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[],
+    updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[],
+    deletes: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[]
   ) => {
     const errors: string[] = [];
 
     for (const c of creates) {
-      const { name, joblevel, description, annualleave, mandatoryworkday } = c;
-      const result = await agentAPI.createAgentinfo({ name, joblevel, description, annualleave, mandatoryworkday });
+      const { name, joblevel, description, annualleave, mandatoryworkday, leavedays } = c;
+      const result = await agentAPI.createAgentinfo({ name, joblevel, description, annualleave, mandatoryworkday, leavedays });
       if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
     }
     for (const u of updates) {
-      const { id, name, joblevel, description, annualleave, mandatoryworkday } = u;
-      const result = await agentAPI.updateAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday });
+      const { id, name, joblevel, description, annualleave, mandatoryworkday, leavedays } = u;
+      const result = await agentAPI.updateAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday, leavedays });
       if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
     }
     for (const d of deletes) {
-      const { id, name, joblevel, description, annualleave, mandatoryworkday } = d;
-      const result = await agentAPI.deleteAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday });
+      const { id, name, joblevel, description, annualleave, mandatoryworkday, leavedays } = d;
+      const result = await agentAPI.deleteAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday, leavedays });
       if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
     }
 

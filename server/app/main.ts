@@ -16,7 +16,7 @@ app.use(cors());
 
 app.listen(PORT, async () => {
   console.log(`server start at ${PORT}`);
-  // 기존 DB 에 mandatory_workday(필수 근무일) 컬럼이 없으면 추가
+  // 기존 DB 에 mandatory_workday(필수 근무일) / leave_days(월 휴무 일수) 컬럼이 없으면 추가
   try {
     await new AgentinfoRepository().ensureAgentSchema();
   } catch (err) {

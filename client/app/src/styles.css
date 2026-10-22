@@ -87,9 +87,17 @@ input[type="text"] {
 }
 
 .emp-grid-cell input[type="text"],
+.emp-grid-cell input[type="number"],
 .emp-grid-cell select {
   width: 100%;
   min-width: 0;
+}
+
+.emp-grid-cell input[type="number"] {
+  border: none;
+  padding: 4px;
+  box-sizing: border-box;
+  text-align: center;
 }
 
 .emp-grid-header {

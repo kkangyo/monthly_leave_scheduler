@@ -9,6 +9,7 @@ class AgentinfoRepository {
 
   // 기존 DB 마이그레이션:
   //  - agent_informations.mandatory_workday 컬럼 추가
+  //  - agent_informations.leave_days(월 휴무 일수, 기본 8) 컬럼 추가
   //  - monthly_leaves.leave_type ENUM 에 'comp'(대체휴무) 추가
   async ensureAgentSchema(): Promise<void> {
     let conn;
@@ -26,6 +27,20 @@ class AgentinfoRepository {
         await conn.query(
           `ALTER TABLE agent_informations
              ADD COLUMN mandatory_workday varchar(255) NOT NULL DEFAULT '';`
+        );
+      }
+
+      const [leaveDaysCols]: [any[], any] = await conn.query(
+        `SELECT COUNT(*) AS cnt
+           FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'agent_informations'
+            AND COLUMN_NAME = 'leave_days';`
+      );
+      if (!leaveDaysCols[0] || Number(leaveDaysCols[0].cnt) === 0) {
+        await conn.query(
+          `ALTER TABLE agent_informations
+             ADD COLUMN leave_days INT NOT NULL DEFAULT 8;`
         );
       }
 
@@ -55,6 +70,7 @@ class AgentinfoRepository {
     description,
     annualleave,
     mandatoryworkday,
+    leavedays,
   }: AgentinfoDto): Promise<string> {
     let conn;
     try {
@@ -62,8 +78,8 @@ class AgentinfoRepository {
       console.log("enter createAgent");
 
       const query = `
-        INSERT INTO agent_informations (agent_information_id, name, job_level, description, annualleave, mandatory_workday)
-        VALUES (UUID(), ?, ?, ?, ?, ?);`;
+        INSERT INTO agent_informations (agent_information_id, name, job_level, description, annualleave, mandatory_workday, leave_days)
+        VALUES (UUID(), ?, ?, ?, ?, ?, ?);`;
 
       const [row] = await conn.execute<ResultSetHeader>(query, [
         name,
@@ -71,6 +87,7 @@ class AgentinfoRepository {
         description,
         annualleave,
         mandatoryworkday ?? '',
+        leavedays,
       ]);
 
       return "true";
@@ -106,13 +123,14 @@ class AgentinfoRepository {
     joblevel: string,
     description: string,
     annualleave: string,
-    mandatoryworkday: string
+    mandatoryworkday: string,
+    leavedays: number
   ): Promise<number> {
     let conn;
     try {
       conn = await db.getConnection();
 
-      const query = `UPDATE agent_informations SET name = ?, job_level = ?, description = ?, annualleave = ?, mandatory_workday = ? WHERE agent_information_id = ?`;
+      const query = `UPDATE agent_informations SET name = ?, job_level = ?, description = ?, annualleave = ?, mandatory_workday = ?, leave_days = ? WHERE agent_information_id = ?`;
 
       const [row] = await conn.execute<OkPacket>(query, [
         name,
@@ -120,6 +138,7 @@ class AgentinfoRepository {
         description,
         annualleave,
         mandatoryworkday ?? '',
+        leavedays,
         agentId,
       ]);
 
@@ -151,7 +170,7 @@ class AgentinfoRepository {
       conn = await db.getConnection();
 
       const query = `
-        SELECT agent_information_id AS id, name, job_level, description, annualleave, mandatory_workday FROM agent_informations ORDER BY created_at ASC;`;
+        SELECT agent_information_id AS id, name, job_level, description, annualleave, mandatory_workday, leave_days FROM agent_informations ORDER BY created_at ASC;`;
 
       const [row] = await conn.execute<AgentinfoEntity[]>(query);
 

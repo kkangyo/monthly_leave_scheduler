@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS `agent_informations` (
   `description` varchar(255) NOT NULL,
   `annualleave` varchar(255) NOT NULL,
   `mandatory_workday` varchar(255) NOT NULL DEFAULT '',
+  `leave_days` INT NOT NULL DEFAULT 8,                     -- 월 휴무 일수 (연차 제외)
   PRIMARY KEY (`agent_information_id`)
 );
 

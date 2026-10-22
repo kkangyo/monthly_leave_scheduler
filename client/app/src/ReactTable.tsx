@@ -14,10 +14,18 @@ export interface Agent {
   description: string;
   annualleave: string;
   mandatory_workday: string;
+  leave_days: number | string; // 한 달 휴무 일수(연차 제외). 입력 중엔 빈 문자열일 수 있어 string 허용, 저장 시 숫자로 변환
   ischecked?: boolean; // 체크하면 '선택 삭제' 버튼이 나타나고, '전체 저장' 시에도 삭제 대상
 }
 
 Modal.setAppElement('#root');
+
+// 인원별 월 휴무 일수 기본값 (새 인원 추가 시, 빈칸/잘못된 값 저장 시)
+export const DEFAULT_LEAVE_DAYS = 8;
+const toLeaveDays = (value: unknown): number => {
+  const n = Number(value);
+  return value !== '' && Number.isInteger(n) && n >= 0 && n <= 31 ? n : DEFAULT_LEAVE_DAYS;
+};
 
 interface TableProps {
   onResetAll?: () => void; // 전체 초기화(스케줄·휴일 입력) 버튼 클릭 핸들러 — App.tsx 소유 로직
@@ -62,20 +70,22 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
   const [confirmAction, setConfirmAction] = useState<(() => void) | null>(null); // 확인 버튼에서 실행할 함수 저장
 
   // 수동으로 열 너비 설정
-  const columnWidths = [90, 110, 250, 200, 200, 100];
+  const columnWidths = [90, 110, 80, 250, 200, 200, 100];
 
   // 스케줄 관련 너비 , Header 설정
-  const colWidthSetSchedule2 = [100, 150, 100, 100, 100];
-  const headerNamesSetSchedule2 = ['1인당 휴일','평일 근무 인원(주말+1)','최소 책임급 수','필수 1층 인원', '필수 2층 인원'];
+  //  scheduleEssentialWork[0](1인당 휴일)은 직원 표의 인원별 '휴무 일수'로 대체되어 표시하지 않는다 → 1~4번만 노출
+  const essentialWorkIndexes = [1, 2, 3, 4];
+  const colWidthSetSchedule2 = [150, 100, 100, 100];
+  const headerNamesSetSchedule2 = ['평일 근무 인원(주말+1)','최소 책임급 수','필수 1층 인원', '필수 2층 인원'];
   
   const colWidthHeaderSubjobs = [160, 160];
   const colWidthSubjobs = [80, 80, 80, 80];
   const headerNamesSubjobs = ['온라인 업무','RT 업무'];
 
   // Header 이름 설정
-  const headerNames = ['이름','직무 등급','원하는 휴일', '연차 신청', '필수 근무일', '누적 사용 연차'];
+  const headerNames = ['이름','직무 등급','휴무 일수','원하는 휴일', '연차 신청', '필수 근무일', '누적 사용 연차'];
   // 수동으로 열 수정 가능 여부 설정 (마지막 '누적 사용 연차'는 읽기 전용)
-  const editableColumns = [true, true, true, true, true, false];
+  const editableColumns = [true, true, true, true, true, true, false];
 
   // agentList를 기반으로 데이터 설정
   useEffect(() => {
@@ -91,7 +101,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
 
   // 새로운 행 추가 함수
   const addRow = () => {
-    const newRow: Agent = { id: '', name: '', job_level: '', description: '', annualleave: '', mandatory_workday: ''}; // 기본값을 가진 새 행
+    const newRow: Agent = { id: '', name: '', job_level: '', description: '', annualleave: '', mandatory_workday: '', leave_days: DEFAULT_LEAVE_DAYS }; // 기본값을 가진 새 행
     setData([...data, newRow]);
   };
 
@@ -161,9 +171,9 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
     const originalById = new Map<string, Agent>((agentList ?? []).map((a: Agent) => [a.id, a]));
     const isValidMonth = /^\d{4}-\d{2}$/.test(settingsMonth);
 
-    const creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[] = [];
-    const updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[] = [];
-    const deletes: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string }[] = [];
+    const creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[] = [];
+    const updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[] = [];
+    const deletes: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[] = [];
 
     data.forEach((row, rowIndex) => {
       if (!row.name && !row.job_level) return; // 아직 아무것도 입력 안 한 빈 새 행은 건너뜀
@@ -184,6 +194,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
           original && isValidMonth
             ? mergeMonthDates(original.mandatory_workday, settingsMonth, monthMandatoryworkday)
             : monthMandatoryworkday,
+        leavedays: toLeaveDays(row.leave_days),
       };
 
       if (row.ischecked) {
@@ -195,7 +206,8 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
           row.job_level !== original.job_level ||
           !sameDateString(entry.description, original.description) ||
           !sameDateString(entry.annualleave, original.annualleave) ||
-          !sameDateString(entry.mandatoryworkday, original.mandatory_workday);
+          !sameDateString(entry.mandatoryworkday, original.mandatory_workday) ||
+          entry.leavedays !== toLeaveDays(original.leave_days);
         if (changed) updates.push({ id: row.id, ...entry });
       } else {
         creates.push(entry);
@@ -240,6 +252,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
       description: row.description,
       annualleave: row.annualleave,
       mandatoryworkday: row.mandatory_workday,
+      leavedays: toLeaveDays(row.leave_days),
     }));
     openModal(`선택한 ${deletes.length}명을 삭제할까요?`, () => handleBulkSaveAgents([], [], deletes));
   };
@@ -402,8 +415,8 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
               <td key={colIndex} style={{ width: `${width}px` }}>
                 <input
                   type="text"
-                  value={scheduleEssentialWork[colIndex]}
-                  onChange={(e) => handlePresetWorkNumberChange(colIndex, e.target.value)}
+                  value={scheduleEssentialWork[essentialWorkIndexes[colIndex]]}
+                  onChange={(e) => handlePresetWorkNumberChange(essentialWorkIndexes[colIndex], e.target.value)}
                 />
               </td>
             ))}
@@ -501,7 +514,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
                   onChange={(e) => handleCheckboxChange(rowIndex, e.target.checked)}
                 />
               </div>
-              {['name', 'job_level', 'description', 'annualleave', 'mandatory_workday'].map((field, colIndex) => (
+              {['name', 'job_level', 'leave_days', 'description', 'annualleave', 'mandatory_workday'].map((field, colIndex) => (
                 <div key={colIndex} className={`emp-grid-cell${altClass}`}>
                   {field === "job_level" ? (
                     <select
@@ -518,6 +531,14 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
                       <option value="1층 사원">1층 사원</option>
                       <option value="2층 사원">2층 사원</option>
                     </select>
+                  ) : field === "leave_days" ? (
+                    <input
+                      type="number"
+                      min={0}
+                      max={31}
+                      value={row.leave_days ?? DEFAULT_LEAVE_DAYS}
+                      onChange={(e) => handleInputChange(rowIndex, 'leave_days', e.target.value)}
+                    />
                   ) : field === "description" ? (
                     <DatePicker
                       style={{ width: "250px" }}

@@ -6,6 +6,7 @@ export interface AgentinfoDto {
   description: string;
   annualleave: string;
   mandatoryworkday: string;
+  leavedays: number; // 월 휴무 일수 (연차 제외, 기본 8)
 }
 
 export interface AgentinfoEntity extends RowDataPacket {
@@ -15,6 +16,7 @@ export interface AgentinfoEntity extends RowDataPacket {
   description: string;
   annualleave: string;
   mandatory_workday: string;
+  leave_days: number;
 }
 
 export type LeaveType = 'leave' | 'annual' | 'comp';
