@@ -55,6 +55,11 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
   const [monthlySchedule, setMonthlySchedule] = useState<
     { agentId: string; name: string; jobLevel: string; date: string; type: "leave" | "annual" | "comp" }[]
   >([]);
+  // 바로 이전 달의 확정 휴일/연차 — 휴무 생성 시 이전 달 말 연속 근무를 이어서 보기 위함 (확정본 없으면 leaves 빈 배열)
+  const [prevMonthSchedule, setPrevMonthSchedule] = useState<{
+    month: string;
+    leaves: { agentId: string; name: string; jobLevel: string; date: string; type: "leave" | "annual" | "comp" }[];
+  }>({ month: "", leaves: [] });
   const appSettingsLoadedRef = useRef(false); // 서버 설정 최초 로드 완료 여부
   // 한국 공휴일 (작년~내년, 서버가 매월 공공데이터 API 로 갱신) — 받기 전엔 휴무 생성을 막는다
   const [holidays, setHolidays] = useState<HolidayMap>({});
@@ -162,6 +167,21 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
+  // 'YYYY-MM' 의 바로 이전 달 확정본을 조회 (응답이 늦게 와도 month 로 어느 달 것인지 구분)
+  const fetchPrevMonthSchedule = async (month: string) => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    const [y, m] = month.split("-").map(Number);
+    const d = new Date(y, m - 2, 1);
+    const prev = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    try {
+      const result = await agentAPI.getMonthlySchedule(prev);
+      setPrevMonthSchedule({ month: prev, leaves: result?.leaves ?? [] });
+    } catch (err) {
+      console.error("fetchPrevMonthSchedule error", err);
+      setPrevMonthSchedule({ month: prev, leaves: [] });
+    }
+  };
+
   // 스케줄 초기화: monthly_leaves DROP/재생성 + 모든 직원의 원하는 휴일/연차 신청 입력값 비움
   const resetMonthlyScheduleTable = async () => {
     const result = await agentAPI.resetMonthlyScheduleTable();
@@ -171,6 +191,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     }
     setAnnualLeaveUsage({});
     setMonthlySchedule([]);
+    setPrevMonthSchedule((p) => ({ ...p, leaves: [] }));
     await syncAgentList(); // 비워진 직원 입력값을 화면에 반영
     return true;
   };
@@ -287,6 +308,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     if (currentMonth && /^\d{4}-\d{2}$/.test(currentMonth)) {
       fetchMonthlySchedule(currentMonth);
+      fetchPrevMonthSchedule(currentMonth);
     }
     setSettingsMonth(currentMonth);
   }, [currentMonth]);
@@ -375,6 +397,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         holidaysLoaded,
         monthlySchedule,
         fetchMonthlySchedule,
+        prevMonthSchedule,
         confirmSchedule,
         resetMonthlyScheduleTable,
         setLeaveList,

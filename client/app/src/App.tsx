@@ -42,6 +42,7 @@ function App() {
     settingsMonth,
     setSettingsMonth,
     monthlySchedule,
+    prevMonthSchedule,
     confirmSchedule,
     resetMonthlyScheduleTable,
     holidays,
@@ -232,6 +233,42 @@ function App() {
     const hardCapFor = (emp: Agentinfo): number =>
       directorExempt(emp) ? baseQuotaOf(emp.name) : baseQuotaOf(emp.name) + alteroffday.length;
 
+    //#################### 0-6. 이전 달 말 연속 근무 이어받기
+    //  이전 달에 확정본이 있으면 그 달 마지막 PREV_LOOKBACK 일을 보고, 인원별 '마지막 휴무일'을 이번 달 기준
+    //  가상의 날짜(0 이하)로 둔다: 이전 달 말일에 쉬었으면 0, 말일 전날이면 -1 … 창 안에 휴무가 없으면 -PREV_LOOKBACK.
+    //  → 이번 달 d일 직전 연속 근무일 = d - prevLastLeave - 1. 연속 근무·간격 계산이 전부 이 값을 이어서 쓴다.
+    //  확정본이 없거나(이전 달 무시), 이전 달 확정본에 그 인원 행이 하나도 없으면(신규 인원 등) undefined = 기존처럼 월초 기준.
+    const PREV_LOOKBACK = 5;
+    const prevLastLeave: { [name: string]: number } = {};
+    {
+      const pd = new Date(targetYear, targetMonth - 2, 1);
+      const prevYm = `${pd.getFullYear()}-${pad2(pd.getMonth() + 1)}`;
+      const prevDays = new Date(pd.getFullYear(), pd.getMonth() + 1, 0).getDate();
+      if (prevMonthSchedule.month === prevYm && prevMonthSchedule.leaves.length > 0) {
+        // 설날·추석 당일은 매장 전체 휴무 → 모두 쉰 날로 본다
+        const prevClosedDays: number[] = [];
+        for (let d = prevDays - PREV_LOOKBACK + 1; d <= prevDays; d++) {
+          const hn = holidays[`${prevYm}-${pad2(d)}`];
+          if (hn === "설날" || hn === "추석") prevClosedDays.push(d);
+        }
+        agentData.forEach((emp) => {
+          const rows = prevMonthSchedule.leaves.filter(
+            (l: { name: string; date: string }) => l.name === emp.name && l.date.startsWith(prevYm)
+          );
+          if (rows.length === 0) return;
+          let lastRest = prevDays - PREV_LOOKBACK; // 창 안에 휴무 없음 → 최소 PREV_LOOKBACK 일 연속 근무로 간주
+          rows.forEach((l: { date: string }) => {
+            const d = parseInt(l.date.split("-")[2], 10);
+            if (!Number.isNaN(d) && d > lastRest) lastRest = d;
+          });
+          prevClosedDays.forEach((d) => { if (d > lastRest) lastRest = d; });
+          prevLastLeave[emp.name] = lastRest - prevDays;
+        });
+      }
+    }
+    const hasPrevHistory = (name: string) => prevLastLeave[name] !== undefined;
+    log("prevLastLeave", prevLastLeave);
+
     //#################### 1. 사전 확정 휴무 (결정적: 모든 시도에서 동일)
     //  - leaveList        : 직원 신청 휴무   → 의무 휴무 카운트에 포함
     //  - annualLeaveList  : 연차             → 의무 휴무 카운트에서 제외
@@ -278,7 +315,7 @@ function App() {
       agentData.forEach((emp) => {
         employeeleaveSchedule[emp.name] = [...baseLeaveSchedule[emp.name]];
         leaveCounter[emp.name] = baseLeaveCounter[emp.name];
-        lastLeaveDay[emp.name] = -minWorkGap;
+        lastLeaveDay[emp.name] = prevLastLeave[emp.name] ?? -minWorkGap;
       });
 
       // member 를 그 날 쉬게 했을 때 남는 근무 인원이 매장 운영 조건을 만족하는지 검사.
@@ -297,7 +334,8 @@ function App() {
 
         // ── 4일 연속 근무 초과자 강제 휴무 / 완화 단계: 최소 근무 인원만 ──
         const forcedRest =
-          lastLeaveDay[member.name] > 0 && day - lastLeaveDay[member.name] >= maxWorkGap;
+          (lastLeaveDay[member.name] > 0 || hasPrevHistory(member.name)) &&
+          day - lastLeaveDay[member.name] >= maxWorkGap;
         if (forcedRest || !strict) return temp.length >= minHeadcount;
 
         // ── 일반(strict) 조건 ──
@@ -322,22 +360,22 @@ function App() {
           .map((ds) => parseInt(ds.split("-")[2], 10))
           .filter((n) => !Number.isNaN(n));
 
-      // day 와 가장 가까운 기존 휴무일 사이의 간격 (없으면 큰 값)
+      // day 와 가장 가까운 기존 휴무일 사이의 간격 (없으면 큰 값). 이전 달 마지막 휴무(0 이하)도 포함
       const nearestLeaveGap = (name: string, day: number): number => {
-        let best = 999;
+        let best = hasPrevHistory(name) ? Math.abs(day - prevLastLeave[name]) : 999;
         for (const d of leaveDayNums(name)) best = Math.min(best, Math.abs(d - day));
         return best;
       };
       // day 이전(과거) 가장 최근 휴무로부터의 경과 일수.
-      //  이전 달 근무 이력을 알 수 없어 월초엔 -minWorkGap 기준(=자유롭게 배정 가능)
+      //  이전 달 확정본이 있으면 그 달 마지막 휴무 기준, 없으면 월초엔 -minWorkGap 기준(=자유롭게 배정 가능)
       const daysSinceLeave = (name: string, day: number): number => {
-        let last = -minWorkGap;
+        let last = prevLastLeave[name] ?? -minWorkGap;
         for (const d of leaveDayNums(name)) if (d < day) last = Math.max(last, d);
         return day - last;
       };
-      // 강제 휴무 판정용: 이번 달 실제 휴무 or 월초(=0) 기준으로 연속 근무일 계산
+      // 강제 휴무 판정용: 이번 달 실제 휴무 or 이전 달 마지막 휴무(없으면 월초=0) 기준으로 연속 근무일 계산
       const consecutiveWorkDays = (name: string, day: number): number => {
-        let last = 0;
+        let last = prevLastLeave[name] ?? 0;
         for (const d of leaveDayNums(name)) if (d < day) last = Math.max(last, d);
         return day - last - 1;
       };
@@ -353,6 +391,38 @@ function App() {
       //  로직이 나머지 목표 인원을 채우도록 한다 — "매일 최소 1명"은 수학적으로 보장하되, 누가/얼마나
       //  더 쉴지는 여전히 무작위라 Generate 할 때마다 결과는 계속 달라진다.
       //  (이전 시도들의 코드는 docs/backups/App.tsx.2026-09-28-before-coverage-guarantee.bak 에 보존)
+      //#################### 1-0. 이전 달 말 연속 근무자 월초 우선 휴무
+      //  이전 달 말에 minWorkGap(3)일 이상 연속 근무하고 넘어온 인원은 1일에 우선 휴무, 1일이 안 되면
+      //  연속 근무 한계(maxWorkGap-1=4일)를 넘기 전 날까지 가장 이른 날에 배정. 오래 근무한 사람부터.
+      //  (2일 이하로 넘어온 인원은 따로 배정하지 않고, 위 연속 근무 계산이 이어받아 2-2 강제휴무·5-1 이 막아준다)
+      agentData
+        .filter((emp) => !directorExempt(emp) && hasPrevHistory(emp.name) && -prevLastLeave[emp.name] >= minWorkGap)
+        .sort((a, b) => prevLastLeave[a.name] - prevLastLeave[b.name])
+        .forEach((emp) => {
+          const carried = -prevLastLeave[emp.name]; // 이전 달 말 연속 근무일
+          const lastDay = Math.max(1, Math.min(daysInMonth, maxWorkGap - carried)); // 이 날까지는 쉬어야 4일 이하
+          for (let day = 1; day <= lastDay; day++) {
+            if (offday.includes(day)) return; // 매장 전체 휴무일이 끼어 있으면 그날 쉰다
+            const date = dateOf(day);
+            if (employeeleaveSchedule[emp.name].includes(date)) return; // 사전 확정 휴무·연차가 이미 있음
+            if (leaveCounter[emp.name] >= baseQuotaOf(emp.name)) return;
+            if (isMandatoryWork(emp.name, date)) continue;
+            const dailyWorkforce = agentData.filter((e) => !employeeleaveSchedule[e.name].includes(date));
+            offDutyEmployees[date] = agentData
+              .filter((e) => employeeleaveSchedule[e.name].includes(date))
+              .map((e) => e.name)
+              .concat(emp.name);
+            const ok = checkConditionToLeave(date, dailyWorkforce, emp, false);
+            offDutyEmployees[date] = [];
+            if (!ok) continue;
+            leaveCounter[emp.name] += 1;
+            lastLeaveDay[emp.name] = day;
+            employeeleaveSchedule[emp.name].push(date);
+            allLeaves.push({ name: emp.name, date, day });
+            return;
+          }
+        });
+
       //#################### 1-1. 하루 최소 1명 휴무 보장 (날짜를 무작위 순서로 훑으며 배정)
       const daysNeedingCoverage: number[] = [];
       for (let d = 1; d <= daysInMonth; d++) if (!offday.includes(d)) daysNeedingCoverage.push(d);
@@ -578,7 +648,8 @@ function App() {
         while (progressed && guard++ < 80) {
           if (leaveCounter[emp.name] >= quotaOf(emp.name)) break; // 의무 휴무 쿼터는 절대 초과하지 않는다
           progressed = false;
-          const marks = [0, ...leaveDayNums(emp.name).sort((a, b) => a - b), daysInMonth + 1];
+          const start = prevLastLeave[emp.name] ?? 0; // 이전 달 확정본이 있으면 그 마지막 휴무부터 이어서
+          const marks = [start, ...leaveDayNums(emp.name).sort((a, b) => a - b), daysInMonth + 1];
           for (let k = 0; k < marks.length - 1; k++) {
             if (leaveCounter[emp.name] >= quotaOf(emp.name)) break;
             const from = marks[k];
@@ -590,7 +661,7 @@ function App() {
             let placed = false;
             for (let step = 0; step <= to - from && !placed; step++) {
               for (const cand of step === 0 ? [mid] : [mid - step, mid + step]) {
-                if (cand <= from || cand >= to) continue;
+                if (cand <= from || cand >= to || cand < 1) continue;
                 if (offday.includes(cand)) continue;
                 const date = dateOf(cand);
                 if (isMandatoryWork(emp.name, date)) continue;
@@ -757,10 +828,11 @@ function App() {
           .map((d) => parseInt(d.split("-")[2]))
           .filter((d) => !Number.isNaN(d))
           .sort((a, b) => a - b);
-        let prev = 0;
+        // 이전 달 확정본이 있으면 월초 구간은 이전 달 마지막 휴무부터 이어서 센다
+        let prev = prevLastLeave[emp.name] ?? 0;
         [...leaveDays, daysInMonth + 1].forEach((d, i) => {
           const streak = d - prev - 1; // 이 구간의 연속 근무일수 (월초~첫휴무, 마지막휴무~월말 포함)
-          const isInner = prev > 0 && i < leaveDays.length;
+          const isInner = (i > 0 || hasPrevHistory(emp.name)) && i < leaveDays.length;
           if (streak > maxStreakAllowed) {
             penalty += (streak - maxStreakAllowed) * 300; // 5일 이상 연속근무: 매우 나쁨 (구간 위치 무관)
           } else if (streak === maxStreakAllowed) {
