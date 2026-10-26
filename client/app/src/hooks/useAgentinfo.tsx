@@ -56,6 +56,11 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     { agentId: string; name: string; jobLevel: string; date: string; type: "leave" | "annual" | "comp" }[]
   >([]);
   // 바로 이전 달의 확정 휴일/연차 — 휴무 생성 시 이전 달 말 연속 근무를 이어서 보기 위함 (확정본 없으면 leaves 빈 배열)
+  // 메인 달력 달(currentMonth) '이전 달까지' 그 해 누적 사용 연차 (1월이면 비어있음) — 달력의 '이름 연차(n)' 계산용
+  const [annualUsageBeforeMonth, setAnnualUsageBeforeMonth] = useState<{
+    month: string;
+    usage: { [agentId: string]: number };
+  }>({ month: "", usage: {} });
   const [prevMonthSchedule, setPrevMonthSchedule] = useState<{
     month: string;
     leaves: { agentId: string; name: string; jobLevel: string; date: string; type: "leave" | "annual" | "comp" }[];
@@ -182,6 +187,24 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
+  // 'YYYY-MM' 의 이전 달까지(같은 해 1월부터) 인원별 누적 사용 연차. 1월이면 0 부터 시작이라 조회 안 함
+  const fetchAnnualUsageBeforeMonth = async (month: string) => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    const [y, m] = month.split("-").map(Number);
+    if (m === 1) {
+      setAnnualUsageBeforeMonth({ month, usage: {} });
+      return;
+    }
+    const prev = `${y}-${String(m - 1).padStart(2, "0")}`;
+    try {
+      const result = await agentAPI.getAnnualLeaveUsage(prev);
+      setAnnualUsageBeforeMonth({ month, usage: result?.usage ?? {} });
+    } catch (err) {
+      console.error("fetchAnnualUsageBeforeMonth error", err);
+      setAnnualUsageBeforeMonth({ month, usage: {} });
+    }
+  };
+
   // 스케줄 초기화: monthly_leaves DROP/재생성 + 모든 직원의 원하는 휴일/연차 신청 입력값 비움
   const resetMonthlyScheduleTable = async () => {
     const result = await agentAPI.resetMonthlyScheduleTable();
@@ -192,6 +215,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     setAnnualLeaveUsage({});
     setMonthlySchedule([]);
     setPrevMonthSchedule((p) => ({ ...p, leaves: [] }));
+    setAnnualUsageBeforeMonth((p) => ({ ...p, usage: {} }));
     await syncAgentList(); // 비워진 직원 입력값을 화면에 반영
     return true;
   };
@@ -309,6 +333,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     if (currentMonth && /^\d{4}-\d{2}$/.test(currentMonth)) {
       fetchMonthlySchedule(currentMonth);
       fetchPrevMonthSchedule(currentMonth);
+      fetchAnnualUsageBeforeMonth(currentMonth);
     }
     setSettingsMonth(currentMonth);
   }, [currentMonth]);
@@ -398,6 +423,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         monthlySchedule,
         fetchMonthlySchedule,
         prevMonthSchedule,
+        annualUsageBeforeMonth,
         confirmSchedule,
         resetMonthlyScheduleTable,
         setLeaveList,

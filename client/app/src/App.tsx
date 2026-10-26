@@ -19,6 +19,7 @@ export interface Agentinfo {
 const DEFAULT_EVENT_COLOR = "#ffffff";
 const SELECTED_EVENT_COLOR = "#1a73e8";
 const ANNUAL_EVENT_COLOR = "#ffe0b2"; // 연차는 옅은 주황 (선택된 인원이면 강조색이 우선)
+const REQUESTED_EVENT_COLOR = "#ffcdd2"; // 설정의 '원하는 휴일'로 미리 받은 요청 휴무는 옅은 빨강
 
 // 'YYYY-MM' → 'YYYY년 M월'
 const formatMonthLabel = (month: string) => {
@@ -43,6 +44,7 @@ function App() {
     setSettingsMonth,
     monthlySchedule,
     prevMonthSchedule,
+    annualUsageBeforeMonth,
     confirmSchedule,
     resetMonthlyScheduleTable,
     holidays,
@@ -1082,11 +1084,21 @@ function App() {
   ): EventInput[] => {
     // 괄호 안 숫자 = 그 달의 누적 휴무일 (일반 + 대체 포함, 연차는 제외)
     const perPerson: { [key: string]: number } = {};
+    // 설정의 '원하는 휴일'(leaveList)에 있는 날 = 요청 휴무 → 색으로 구분 (생성·수정 후에도 같은 날이면 유지)
+    // 연차 괄호 숫자 = 그 해 누적 사용 연차: 이전 달까지 확정된 연차 수 + 이번 달 날짜순 누계
+    const idByName: { [name: string]: string } = {};
+    (agentList ?? []).forEach((a: { id: string; name: string }) => { idByName[a.name] = a.id; });
+    const usageBefore: { [agentId: string]: number } =
+      annualUsageBeforeMonth.month === currentMonth ? annualUsageBeforeMonth.usage : {};
+    const annualPerPerson: { [key: string]: number } = {};
+    const requestedKeys = new Set(
+      leaveList.map((e: EventInput) => `${e.title}|${typeof e.start === "string" ? e.start : ""}`)
+    );
     return [...items]
       .filter((i) => i.date)
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((i) => {
-        // 기본은 전원 흰색(연차는 옅은 주황), 달력에서 클릭으로 선택된 인원만 강조색으로 표시
+        // 기본은 전원 흰색(연차는 옅은 주황, 요청 휴무는 옅은 빨강), 달력에서 클릭으로 선택된 인원만 강조색으로 표시
         const isSelected = !!selectedEmployee && i.name === selectedEmployee;
         const ltype = (i.type as "leave" | "comp" | "annual") || "leave";
         const common = {
@@ -1096,14 +1108,18 @@ function App() {
             ? SELECTED_EVENT_COLOR
             : ltype === "annual"
               ? ANNUAL_EVENT_COLOR
-              : DEFAULT_EVENT_COLOR,
+              : requestedKeys.has(`${i.name}|${i.date}`)
+                ? REQUESTED_EVENT_COLOR
+                : DEFAULT_EVENT_COLOR,
           borderColor: "transparent",
           textColor: isSelected ? "#ffffff" : "#333333",
           extendedProps: { name: i.name, ltype },
         };
-        // 연차: 누적 휴무에 포함하지 않고 숫자도 표기하지 않음, 드래그 불가
+        // 연차: 휴무 누계(n일)에는 포함하지 않고, 대신 그 해 누적 사용 연차를 '이름 연차(n)' 로 표기. 드래그 불가
         if (ltype === "annual") {
-          return { ...common, title: `${i.name} 연차`, editable: false };
+          if (annualPerPerson[i.name] === undefined) annualPerPerson[i.name] = usageBefore[idByName[i.name]] || 0;
+          annualPerPerson[i.name] += 1;
+          return { ...common, title: `${i.name} 연차(${annualPerPerson[i.name]})`, editable: false };
         }
         perPerson[i.name] = (perPerson[i.name] || 0) + 1;
         const label = ltype === "comp" ? " 대체" : "";
@@ -1154,7 +1170,7 @@ function App() {
     }
     return buildCalendarEvents(monthlySchedule, canEdit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPreview, canEdit, generatedLeaves, monthlySchedule, agentData, selectedEmployee]);
+  }, [isPreview, canEdit, generatedLeaves, monthlySchedule, agentData, selectedEmployee, leaveList, annualUsageBeforeMonth]);
 
   // 달력에서 휴무를 다른 날짜로 드래그 → 수정본(generatedLeaves) 갱신(확정본이면 복사 후 수정).
   //  별도 경고 없이 반영. 이후 '확정'을 누르면 이 값 그대로 저장됨.
