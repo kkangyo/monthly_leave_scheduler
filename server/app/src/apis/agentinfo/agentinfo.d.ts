@@ -7,6 +7,7 @@ export interface AgentinfoDto {
   annualleave: string;
   mandatoryworkday: string;
   leavedays: number; // 월 휴무 일수 (연차 제외, 기본 8)
+  officialleave: string; // 공가 신청 "YYYY-MM-DD, ..." (개인 연차 소진 없음)
 }
 
 export interface AgentinfoEntity extends RowDataPacket {
@@ -17,9 +18,10 @@ export interface AgentinfoEntity extends RowDataPacket {
   annualleave: string;
   mandatory_workday: string;
   leave_days: number;
+  official_leave: string;
 }
 
-export type LeaveType = 'leave' | 'annual' | 'comp';
+export type LeaveType = 'leave' | 'annual' | 'comp' | 'official'; // official = 공가
 
 export interface MonthlyLeaveDto {
   agentId: string;
@@ -35,6 +37,7 @@ export interface ConfirmScheduleBody {
     leaveDates: string[];
     annualLeaveDates: string[];
     compLeaveDates?: string[];
+    officialLeaveDates?: string[];
   }[];
 }
 

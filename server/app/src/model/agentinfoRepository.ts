@@ -10,6 +10,7 @@ class AgentinfoRepository {
   // 기존 DB 마이그레이션:
   //  - agent_informations.mandatory_workday 컬럼 추가
   //  - agent_informations.leave_days(월 휴무 일수, 기본 8) 컬럼 추가
+  //  - agent_informations.official_leave(공가 신청) 컬럼 추가
   //  - monthly_leaves.leave_type ENUM 에 'comp'(대체휴무) 추가
   async ensureAgentSchema(): Promise<void> {
     let conn;
@@ -44,6 +45,20 @@ class AgentinfoRepository {
         );
       }
 
+      const [officialCols]: [any[], any] = await conn.query(
+        `SELECT COUNT(*) AS cnt
+           FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'agent_informations'
+            AND COLUMN_NAME = 'official_leave';`
+      );
+      if (!officialCols[0] || Number(officialCols[0].cnt) === 0) {
+        await conn.query(
+          `ALTER TABLE agent_informations
+             ADD COLUMN official_leave varchar(255) NOT NULL DEFAULT '';`
+        );
+      }
+
       const [enumRows]: [any[], any] = await conn.query(
         `SELECT COLUMN_TYPE AS t
            FROM information_schema.COLUMNS
@@ -51,10 +66,13 @@ class AgentinfoRepository {
             AND TABLE_NAME = 'monthly_leaves'
             AND COLUMN_NAME = 'leave_type';`
       );
-      if (enumRows[0] && !String(enumRows[0].t).includes("'comp'")) {
+      if (
+        enumRows[0] &&
+        (!String(enumRows[0].t).includes("'comp'") || !String(enumRows[0].t).includes("'official'"))
+      ) {
         await conn.query(
           `ALTER TABLE monthly_leaves
-             MODIFY COLUMN leave_type ENUM('leave','annual','comp') NOT NULL DEFAULT 'leave';`
+             MODIFY COLUMN leave_type ENUM('leave','annual','comp','official') NOT NULL DEFAULT 'leave';`
         );
       }
     } catch (error) {
@@ -71,6 +89,7 @@ class AgentinfoRepository {
     annualleave,
     mandatoryworkday,
     leavedays,
+    officialleave,
   }: AgentinfoDto): Promise<string> {
     let conn;
     try {
@@ -78,8 +97,8 @@ class AgentinfoRepository {
       console.log("enter createAgent");
 
       const query = `
-        INSERT INTO agent_informations (agent_information_id, name, job_level, description, annualleave, mandatory_workday, leave_days)
-        VALUES (UUID(), ?, ?, ?, ?, ?, ?);`;
+        INSERT INTO agent_informations (agent_information_id, name, job_level, description, annualleave, mandatory_workday, leave_days, official_leave)
+        VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?);`;
 
       const [row] = await conn.execute<ResultSetHeader>(query, [
         name,
@@ -88,6 +107,7 @@ class AgentinfoRepository {
         annualleave,
         mandatoryworkday ?? '',
         leavedays,
+        officialleave ?? '',
       ]);
 
       return "true";
@@ -124,13 +144,14 @@ class AgentinfoRepository {
     description: string,
     annualleave: string,
     mandatoryworkday: string,
-    leavedays: number
+    leavedays: number,
+    officialleave: string
   ): Promise<number> {
     let conn;
     try {
       conn = await db.getConnection();
 
-      const query = `UPDATE agent_informations SET name = ?, job_level = ?, description = ?, annualleave = ?, mandatory_workday = ?, leave_days = ? WHERE agent_information_id = ?`;
+      const query = `UPDATE agent_informations SET name = ?, job_level = ?, description = ?, annualleave = ?, mandatory_workday = ?, leave_days = ?, official_leave = ? WHERE agent_information_id = ?`;
 
       const [row] = await conn.execute<OkPacket>(query, [
         name,
@@ -139,6 +160,7 @@ class AgentinfoRepository {
         annualleave,
         mandatoryworkday ?? '',
         leavedays,
+        officialleave ?? '',
         agentId,
       ]);
 
@@ -170,7 +192,7 @@ class AgentinfoRepository {
       conn = await db.getConnection();
 
       const query = `
-        SELECT agent_information_id AS id, name, job_level, description, annualleave, mandatory_workday, leave_days FROM agent_informations ORDER BY created_at ASC;`;
+        SELECT agent_information_id AS id, name, job_level, description, annualleave, mandatory_workday, leave_days, official_leave FROM agent_informations ORDER BY created_at ASC;`;
 
       const [row] = await conn.execute<AgentinfoEntity[]>(query);
 
@@ -289,7 +311,7 @@ class AgentinfoRepository {
           \`agent_information_id\` CHAR(36) NOT NULL,
           \`schedule_month\` CHAR(7) NOT NULL,
           \`leave_date\` DATE NOT NULL,
-          \`leave_type\` ENUM('leave', 'annual', 'comp') NOT NULL DEFAULT 'leave',
+          \`leave_type\` ENUM('leave', 'annual', 'comp', 'official') NOT NULL DEFAULT 'leave',
           \`confirmed_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
           PRIMARY KEY (\`monthly_leave_id\`),
           UNIQUE KEY \`uq_agent_date\` (\`agent_information_id\`, \`leave_date\`),
@@ -309,7 +331,7 @@ class AgentinfoRepository {
     try {
       conn = await db.getConnection();
 
-      const query = `UPDATE agent_informations SET description = '', annualleave = '', mandatory_workday = '';`;
+      const query = `UPDATE agent_informations SET description = '', annualleave = '', mandatory_workday = '', official_leave = '';`;
 
       const [row] = await conn.execute<OkPacket>(query);
 

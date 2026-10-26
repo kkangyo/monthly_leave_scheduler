@@ -38,6 +38,7 @@ class Agentinfo {
       annualleave: body.annualleave,
       mandatoryworkday: body.mandatoryworkday ?? '',
       leavedays: normalizeLeaveDays(body.leavedays),
+      officialleave: body.officialleave ?? '',
     };
 
     const commentId = await this.agentinfoRepository.createAgent(
@@ -49,7 +50,7 @@ class Agentinfo {
   }
   
   async updateAgentinfoById(agentinfoId: string): Promise<Response> {
-    const { name, joblevel, description, annualleave, mandatoryworkday, leavedays }: AgentinfoDto =
+    const { name, joblevel, description, annualleave, mandatoryworkday, leavedays, officialleave }: AgentinfoDto =
       this.body;
 
     const agentinfo = await this.agentinfoRepository.getAgentinfoById(
@@ -65,7 +66,8 @@ class Agentinfo {
       description,
       annualleave,
       mandatoryworkday ?? '',
-      normalizeLeaveDays(leavedays)
+      normalizeLeaveDays(leavedays),
+      officialleave ?? ''
     );
 
     return { success: true, msg: 'Agent info update complete' };
@@ -105,9 +107,11 @@ class Agentinfo {
 
       const annualSet = new Set(clean(entry.annualLeaveDates));
       const compSet = new Set(clean(entry.compLeaveDates));
+      const officialSet = new Set(clean(entry.officialLeaveDates));
       const allDates = new Set(clean(entry.leaveDates));
       annualSet.forEach((d) => allDates.add(d)); // 연차일도 휴무일에 포함
       compSet.forEach((d) => allDates.add(d)); // 대체휴무일도 휴무일에 포함
+      officialSet.forEach((d) => allDates.add(d)); // 공가일도 휴무일에 포함
 
       const rows = [...allDates].map((date) => ({
         agentId: entry.agentId,
@@ -115,6 +119,8 @@ class Agentinfo {
         leaveDate: date,
         leaveType: (annualSet.has(date)
           ? 'annual'
+          : officialSet.has(date)
+          ? 'official'
           : compSet.has(date)
           ? 'comp'
           : 'leave') as LeaveType,

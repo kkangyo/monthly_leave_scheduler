@@ -18,8 +18,10 @@ export interface Agentinfo {
 // 달력 이벤트 색상: 기본은 전원 흰색(테두리 없음), 클릭으로 선택된 인원만 강조색
 const DEFAULT_EVENT_COLOR = "#ffffff";
 const SELECTED_EVENT_COLOR = "#1a73e8";
-const ANNUAL_EVENT_COLOR = "#ffe0b2"; // 연차는 옅은 주황 (선택된 인원이면 강조색이 우선)
+const ANNUAL_EVENT_COLOR = "#ffe0b2"; // 연차는 옅은 주황
 const REQUESTED_EVENT_COLOR = "#ffcdd2"; // 설정의 '원하는 휴일'로 미리 받은 요청 휴무는 옅은 빨강
+const OFFICIAL_EVENT_COLOR = "#c8e6c9"; // 공가(개인 연차 소진 없음)는 옅은 초록
+// 연차·요청 휴무·공가는 인원을 선택해도 배경색을 유지하고, 선택은 파란 테두리(kr-event-selected)로 표시한다
 
 // 'YYYY-MM' → 'YYYY년 M월'
 const formatMonthLabel = (month: string) => {
@@ -38,6 +40,7 @@ function App() {
     selectedSubjob2,
     leaveList,
     annualLeaveList,
+    officialLeaveList,
     mandatoryWorkList,
     currentMonth,
     settingsMonth,
@@ -55,7 +58,7 @@ function App() {
   // 확정 저장을 위해 마지막으로 생성된 휴무(가공 전 원본)와 그 대상 달을 보관
   //  type: "leave" 일반 휴무 / "comp" 공휴일 근무 대체휴무 / "annual" 연차
   const [generatedLeaves, setGeneratedLeaves] = useState<
-    { name: string; date: string; type: "leave" | "comp" | "annual" }[]
+    { name: string; date: string; type: "leave" | "comp" | "annual" | "official" }[]
   >([]);
   const [generatedMonth, setGeneratedMonth] = useState<string>("");
   // 수정본(generatedLeaves)의 출처 (미리보기 안내 문구용): 휴무 생성 / 직급순 생성 / 확정본 수정
@@ -284,6 +287,7 @@ function App() {
     //#################### 1. 사전 확정 휴무 (결정적: 모든 시도에서 동일)
     //  - leaveList        : 직원 신청 휴무   → 의무 휴무 카운트에 포함
     //  - annualLeaveList  : 연차             → 의무 휴무 카운트에서 제외
+    //  - officialLeaveList: 공가             → 의무 휴무 카운트에서 제외 (개인 연차 소진도 없음)
     const baseLeaveSchedule: { [key: string]: string[] } = {};
     const baseLeaveCounter: { [key: string]: number } = {};
     const basePreLeaves: { name: string; date: string; day: number }[] = [];
@@ -309,6 +313,7 @@ function App() {
     };
     applyPreset(leaveList, true);
     applyPreset(annualLeaveList, false);
+    applyPreset(officialLeaveList, false); // 공가: 연차처럼 사전 확정, 의무 휴무 카운트 미포함
 
     //#################### 1-A. 하루 평균 휴무 수준(물 채우기 수준) — 휴무 몰림 방지용
     //  이번 달 전체 휴무 공급(사전 확정 휴무 + 인원별 남은 의무 휴무 + 평일 공휴일 대체휴무)을 날짜에 고르게
@@ -1117,6 +1122,14 @@ function App() {
       const [y, m] = d.split("-").map(Number);
       if (y === targetYear && m === targetMonth) annualKeySet.add(`${title}|${d}`);
     });
+    // 대상 월 공가 신청일 (name|date)
+    const officialKeySet = new Set<string>();
+    officialLeaveList.forEach(({ title, start }: EventInput) => {
+      if (!title || !start) return;
+      const d = start.toString();
+      const [y, m] = d.split("-").map(Number);
+      if (y === targetYear && m === targetMonth) officialKeySet.add(`${title}|${d}`);
+    });
 
     // 인원별 실제 대체휴무 쿼터(그 사람의 휴무 일수 + 공휴일 크레딧) — 공휴일이 없는 달은 credit=0 이라 휴무 일수 그대로.
     //  점장은 directorFullQuota=false 면 크레딧 없음(directorExempt), 사전 확정 휴무일 외엔 배정도 안 됨.
@@ -1133,6 +1146,9 @@ function App() {
     const tagged = allLeaves.map(({ name, date }) => {
       if (annualKeySet.has(`${name}|${date}`)) {
         return { name, date, type: "annual" as const };
+      }
+      if (officialKeySet.has(`${name}|${date}`)) {
+        return { name, date, type: "official" as const };
       }
       obligatoryCount[name] = (obligatoryCount[name] || 0) + 1;
       const isComp = obligatoryCount[name] > baseQuotaOf(name) && obligatoryCount[name] <= finalQuotaOf(name);
@@ -1190,23 +1206,31 @@ function App() {
       .filter((i) => i.date)
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((i) => {
-        // 기본은 전원 흰색(연차는 옅은 주황, 요청 휴무는 옅은 빨강), 달력에서 클릭으로 선택된 인원만 강조색으로 표시
+        // 기본은 전원 흰색, 연차는 옅은 주황 / 공가는 옅은 초록 / 요청 휴무는 옅은 빨강.
+        //  달력에서 클릭으로 선택된 인원은 일반 휴무면 강조색(파랑) 배경, 색이 있는 휴무면 그 색을 유지하고 파란 테두리로 표시
         const isSelected = !!selectedEmployee && i.name === selectedEmployee;
-        const ltype = (i.type as "leave" | "comp" | "annual") || "leave";
+        const ltype = (i.type as "leave" | "comp" | "annual" | "official") || "leave";
+        const typeColor =
+          ltype === "annual"
+            ? ANNUAL_EVENT_COLOR
+            : ltype === "official"
+              ? OFFICIAL_EVENT_COLOR
+              : requestedKeys.has(`${i.name}|${i.date}`)
+                ? REQUESTED_EVENT_COLOR
+                : null;
         const common = {
           id: `${i.name}|${i.date}`,
           start: i.date,
-          backgroundColor: isSelected
-            ? SELECTED_EVENT_COLOR
-            : ltype === "annual"
-              ? ANNUAL_EVENT_COLOR
-              : requestedKeys.has(`${i.name}|${i.date}`)
-                ? REQUESTED_EVENT_COLOR
-                : DEFAULT_EVENT_COLOR,
-          borderColor: "transparent",
-          textColor: isSelected ? "#ffffff" : "#333333",
+          backgroundColor: typeColor ?? (isSelected ? SELECTED_EVENT_COLOR : DEFAULT_EVENT_COLOR),
+          borderColor: isSelected ? SELECTED_EVENT_COLOR : "transparent",
+          textColor: isSelected && !typeColor ? "#ffffff" : "#333333",
+          classNames: isSelected && typeColor ? ["kr-event-selected"] : [],
           extendedProps: { name: i.name, ltype },
         };
+        // 공가: 휴무 누계(n일)·연차 누계 모두 미포함, 드래그 불가
+        if (ltype === "official") {
+          return { ...common, title: `${i.name} 공가`, editable: false };
+        }
         // 연차: 휴무 누계(n일)에는 포함하지 않고, 대신 그 해 누적 사용 연차를 '이름 연차(n)' 로 표기. 드래그 불가
         if (ltype === "annual") {
           if (annualPerPerson[i.name] === undefined) annualPerPerson[i.name] = usageBefore[idByName[i.name]] || 0;
@@ -1231,8 +1255,8 @@ function App() {
   // 달력 수정 반영: 미리보기면 수정본을, 아니면 확정본을 복사해 수정본으로 만든 뒤 고친다.
   //  수정본은 '확정'을 눌러야 서버에 덮어써 저장된다.
   const updateDraft = (
-    edit: (list: { name: string; date: string; type: "leave" | "comp" | "annual" }[]) =>
-      { name: string; date: string; type: "leave" | "comp" | "annual" }[],
+    edit: (list: { name: string; date: string; type: "leave" | "comp" | "annual" | "official" }[]) =>
+      { name: string; date: string; type: "leave" | "comp" | "annual" | "official" }[],
     alreadyConfirmed = false // 호출한 쪽에서 다른 달 수정본 폐기를 이미 확인했으면 true
   ) => {
     if (isPreview) {
@@ -1240,7 +1264,7 @@ function App() {
       return;
     }
     if (!alreadyConfirmed && !confirmDiscardOtherDraft()) return;
-    const base = monthlySchedule.map((l: { name: string; date: string; type: "leave" | "comp" | "annual" }) => ({
+    const base = monthlySchedule.map((l: { name: string; date: string; type: "leave" | "comp" | "annual" | "official" }) => ({
       name: l.name,
       date: l.date,
       type: l.type,
@@ -1307,7 +1331,7 @@ function App() {
 
     if (!canEdit) return;
     const ltype = info.event.extendedProps?.ltype as string | undefined;
-    if (ltype === "annual") return;
+    if (ltype === "annual" || ltype === "official") return; // 연차·공가는 설정 표에서 관리
     setAddDate(null); // 다른 곳에서 열려있던 추가 위젯은 닫기
     const id = info.event.id;
     setPendingDeleteId((prev) => (prev === id ? null : id));
@@ -1323,7 +1347,7 @@ function App() {
   const renderEventContent = (arg: EventContentArg): React.ReactNode => {
     const id = arg.event.id;
     const ltype = arg.event.extendedProps?.ltype as string | undefined;
-    const showX = canEdit && ltype !== "annual" && id === pendingDeleteId;
+    const showX = canEdit && ltype !== "annual" && ltype !== "official" && id === pendingDeleteId;
     return (
       <div className="kr-event-row">
         <span className="kr-event-title">{arg.event.title}</span>
@@ -1446,7 +1470,19 @@ function App() {
             .map((e: EventInput) => e.start as string)
         )
       );
-      return { agentId: agent.id, leaveDates, compLeaveDates, annualLeaveDates };
+      const officialLeaveDates = Array.from(
+        new Set(
+          officialLeaveList
+            .filter(
+              (e: EventInput) =>
+                e.title === agent.name &&
+                typeof e.start === "string" &&
+                (e.start as string).startsWith(monthPrefix)
+            )
+            .map((e: EventInput) => e.start as string)
+        )
+      );
+      return { agentId: agent.id, leaveDates, compLeaveDates, annualLeaveDates, officialLeaveDates };
     });
 
     try {

@@ -14,6 +14,7 @@ export interface Agent {
   description: string;
   annualleave: string;
   mandatory_workday: string;
+  official_leave?: string; // 공가 신청 (개인 연차 소진 없음), annualleave 와 같은 콤마 날짜 문자열
   leave_days: number | string; // 한 달 휴무 일수(연차 제외). 입력 중엔 빈 문자열일 수 있어 string 허용, 저장 시 숫자로 변환
   ischecked?: boolean; // 체크하면 '선택 삭제' 버튼이 나타나고, '전체 저장' 시에도 삭제 대상
 }
@@ -40,10 +41,12 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
     selectedDates,
     selectedAnnualleave,
     selectedMandatoryWork,
+    selectedOfficialLeave,
     handleBulkSaveAgents,
     setSelectedDates,
     setSelectedAnnualleave,
     setSelectedMandatoryWork,
+    setSelectedOfficialLeave,
     setSelectedDateList,
     scheduleEssentialWork,
     directorFullQuota,
@@ -70,7 +73,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
   const [confirmAction, setConfirmAction] = useState<(() => void) | null>(null); // 확인 버튼에서 실행할 함수 저장
 
   // 수동으로 열 너비 설정
-  const columnWidths = [90, 110, 80, 250, 200, 200, 100];
+  const columnWidths = [90, 110, 80, 250, 200, 200, 200, 100];
 
   // 스케줄 관련 너비 , Header 설정
   //  scheduleEssentialWork[0](1인당 휴일)은 직원 표의 인원별 '휴무 일수'로 대체되어 표시하지 않는다 → 1~4번만 노출
@@ -83,9 +86,9 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
   const headerNamesSubjobs = ['온라인 업무','RT 업무'];
 
   // Header 이름 설정
-  const headerNames = ['이름','직무 등급','휴무 일수','원하는 휴일', '연차 신청', '필수 근무일', '누적 사용 연차'];
+  const headerNames = ['이름','직무 등급','휴무 일수','원하는 휴일', '연차 신청', '공가 신청', '필수 근무일', '누적 사용 연차'];
   // 수동으로 열 수정 가능 여부 설정 (마지막 '누적 사용 연차'는 읽기 전용)
-  const editableColumns = [true, true, true, true, true, true, false];
+  const editableColumns = [true, true, true, true, true, true, true, false];
 
   // agentList를 기반으로 데이터 설정
   useEffect(() => {
@@ -101,7 +104,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
 
   // 새로운 행 추가 함수
   const addRow = () => {
-    const newRow: Agent = { id: '', name: '', job_level: '', description: '', annualleave: '', mandatory_workday: '', leave_days: DEFAULT_LEAVE_DAYS }; // 기본값을 가진 새 행
+    const newRow: Agent = { id: '', name: '', job_level: '', description: '', annualleave: '', mandatory_workday: '', official_leave: '', leave_days: DEFAULT_LEAVE_DAYS }; // 기본값을 가진 새 행
     setData([...data, newRow]);
   };
 
@@ -171,9 +174,9 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
     const originalById = new Map<string, Agent>((agentList ?? []).map((a: Agent) => [a.id, a]));
     const isValidMonth = /^\d{4}-\d{2}$/.test(settingsMonth);
 
-    const creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[] = [];
-    const updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[] = [];
-    const deletes: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[] = [];
+    const creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number; officialleave: string }[] = [];
+    const updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number; officialleave: string }[] = [];
+    const deletes: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number; officialleave: string }[] = [];
 
     data.forEach((row, rowIndex) => {
       if (!row.name && !row.job_level) return; // 아직 아무것도 입력 안 한 빈 새 행은 건너뜀
@@ -182,6 +185,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
       const monthDescription = formatDateList(selectedDates[rowIndex]?.date);
       const monthAnnualleave = formatDateList(selectedAnnualleave[rowIndex]?.date);
       const monthMandatoryworkday = formatDateList(selectedMandatoryWork[rowIndex]?.date);
+      const monthOfficialleave = formatDateList(selectedOfficialLeave[rowIndex]?.date);
 
       const entry = {
         name: row.name,
@@ -195,6 +199,10 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
             ? mergeMonthDates(original.mandatory_workday, settingsMonth, monthMandatoryworkday)
             : monthMandatoryworkday,
         leavedays: toLeaveDays(row.leave_days),
+        officialleave:
+          original && isValidMonth
+            ? mergeMonthDates(original.official_leave || '', settingsMonth, monthOfficialleave)
+            : monthOfficialleave,
       };
 
       if (row.ischecked) {
@@ -207,7 +215,8 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
           !sameDateString(entry.description, original.description) ||
           !sameDateString(entry.annualleave, original.annualleave) ||
           !sameDateString(entry.mandatoryworkday, original.mandatory_workday) ||
-          entry.leavedays !== toLeaveDays(original.leave_days);
+          entry.leavedays !== toLeaveDays(original.leave_days) ||
+          !sameDateString(entry.officialleave, original.official_leave || '');
         if (changed) updates.push({ id: row.id, ...entry });
       } else {
         creates.push(entry);
@@ -253,6 +262,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
       annualleave: row.annualleave,
       mandatoryworkday: row.mandatory_workday,
       leavedays: toLeaveDays(row.leave_days),
+      officialleave: row.official_leave || '',
     }));
     openModal(`선택한 ${deletes.length}명을 삭제할까요?`, () => handleBulkSaveAgents([], [], deletes));
   };
@@ -305,6 +315,22 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
       if(formattedDates.includes("NaN")) return;
       // 상태를 처리하는 함수 호출
       handleInputChange(rowIndex, 'annualleave', formattedDates);
+    }
+  };
+
+  const handleOL_DateChange = (rowIndex: number, dates: DateObject[]) => {
+    if(!selectedOfficialLeave[rowIndex]){
+      selectedOfficialLeave[rowIndex] = {name:"", date:[]};
+    }
+    selectedOfficialLeave[rowIndex].date = dates;
+    setSelectedOfficialLeave(selectedOfficialLeave);
+  };
+
+  const handleOL_DatePickerClose = (rowIndex: number) => { // DatePicker가 닫힐 때 호출되는 함수
+    if(selectedOfficialLeave[rowIndex]){
+      const formattedDates = formatDateList(selectedOfficialLeave[rowIndex].date);
+      if(formattedDates.includes("NaN")) return;
+      handleInputChange(rowIndex, 'official_leave', formattedDates);
     }
   };
 
@@ -514,7 +540,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
                   onChange={(e) => handleCheckboxChange(rowIndex, e.target.checked)}
                 />
               </div>
-              {['name', 'job_level', 'leave_days', 'description', 'annualleave', 'mandatory_workday'].map((field, colIndex) => (
+              {['name', 'job_level', 'leave_days', 'description', 'annualleave', 'official_leave', 'mandatory_workday'].map((field, colIndex) => (
                 <div key={colIndex} className={`emp-grid-cell${altClass}`}>
                   {field === "job_level" ? (
                     <select
@@ -559,6 +585,19 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
                       onChange={(dates: DateObject[]) => handle_AN_DateChange(rowIndex, dates)}
                       onClose={() => handle_AN_DatePickerClose(rowIndex)}
                       value={selectedAnnualleave[rowIndex]?.date || []}
+                      multiple
+                      readOnly={!editableColumns[colIndex]}
+                      format="MM/DD"
+                      calendarPosition="bottom-center"
+                      currentDate={pickerMonth}
+                      className="black"
+                    />
+                  ) : field === "official_leave" ? (
+                    <DatePicker
+                      style={{ width: "250px" }}
+                      onChange={(dates: DateObject[]) => handleOL_DateChange(rowIndex, dates)}
+                      onClose={() => handleOL_DatePickerClose(rowIndex)}
+                      value={selectedOfficialLeave[rowIndex]?.date || []}
                       multiple
                       readOnly={!editableColumns[colIndex]}
                       format="MM/DD"

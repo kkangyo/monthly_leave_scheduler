@@ -46,7 +46,7 @@
 
 | 표 | 항목 | 저장 위치 |
 |---|---|---|
-| 직원 표 | 이름, 직무 등급, **휴무 일수**, 원하는 휴일, 연차 신청, 필수 근무일, **누적 사용 연차(읽기전용)** | `agent_informations` (앞 6개 — 휴무 일수는 `leave_days` 정수(기본 8), 날짜 3개는 `"YYYY-MM-DD, ..."` 콤마 문자열) / `monthly_leaves` 집계(마지막). **직급순 정렬**(점장>부점장>매니저>대리>사원, 같은 직급이면 1층<2층) |
+| 직원 표 | 이름, 직무 등급, **휴무 일수**, 원하는 휴일, 연차 신청, **공가 신청**, 필수 근무일, **누적 사용 연차(읽기전용)** | `agent_informations` (앞 7개 — 휴무 일수는 `leave_days` 정수(기본 8), 날짜 4개는 `"YYYY-MM-DD, ..."` 콤마 문자열) / `monthly_leaves` 집계(마지막). **직급순 정렬**(점장>부점장>매니저>대리>사원, 같은 직급이면 1층<2층) |
 | 필수 조건 | `평일 근무 인원(주말+1)`, `최소 책임급 수`, `필수 1층 인원`, `필수 2층 인원` | `app_settings.essentialWork` (JSON 배열). 기본값 `[8,6,1,3,2]` — 0번(옛 `1인당 휴일`)은 인원별 휴무 일수로 대체되어 화면에 안 나오고 알고리즘도 안 읽음(배열 순서 유지용) |
 | 점장 휴무 방식 | "사전 확정 휴무일에만 쉼" / "직원과 동일하게 의무 휴무 적용" | `app_settings.directorFullQuota` (boolean, 기본 `false`) |
 | 보조직무 | 온라인 업무 2명, RT 업무 2명 | `app_settings.subjob1`/`subjob2` |
@@ -56,7 +56,9 @@
 직원 표의 **휴무 일수**는 그 직원이 한 달에 쉬는 의무 휴무일수(연차 제외)로, 달과 무관하게 인원별로 하나의 값이다.
 새 인원은 8 로 시작하고, 빈칸·0~31 밖의 값은 저장 시 8 로 처리된다.
 
-직원 표의 **원하는 휴일 / 연차 신청 / 필수 근무일**은 서버에는 인원당 전체 기간이 한 콤마 문자열로 저장되지만,
+**공가 신청**은 공가(개인 연차를 소진하지 않는 휴가) 날짜 — 연차처럼 사전 확정 휴무로 들어가고 의무 휴무에도, 누적 사용 연차에도 세지 않는다.
+
+직원 표의 **원하는 휴일 / 연차 신청 / 공가 신청 / 필수 근무일**은 서버에는 인원당 전체 기간이 한 콤마 문자열로 저장되지만,
 화면에는 **지금 달력에서 보고 있는 달의 날짜만** 표시·수정된다(달을 바꾸면 그 달 값으로 다시 불러옴, 없으면 빈칸).
 저장 시에는 그 달 값만 새로 교체하고 다른 달 값은 그대로 보존한다(`mergeMonthDates`).
 
@@ -94,7 +96,7 @@
 
 - 표시 대상: 이번 달 수정본이 있으면(`isPreview` = 방금 생성했거나 확정본을 달력에서 고친 뒤 확정 전) 그 수정본, 아니면 서버 확정 저장본.
   수정본은 한 달치만 메모리에 보관(`generatedLeaves`/`generatedMonth`) — 다른 달을 새로 생성·수정하면 확인 후 버려진다.
-- 이벤트 제목: 일반 휴무 `이름 (n일)` / 대체휴무 `이름 (n일) 대체`(`n` 에 포함) / 연차 `이름 연차(n)`(`n` = 그 해 누적 사용 연차: 이전 달까지 확정분 `GET /annual-leave/usage?month=이전달` + 이번 달 날짜순 누계, 1월은 0부터. 휴무 누계 `(n일)` 에는 미포함). 색상은 기본 전원 흰색, **연차는 옅은 주황(`#ffe0b2`)**, **설정의 '원하는 휴일'로 받은 요청 휴무는 옅은 빨강(`#ffcdd2`, `leaveList` 의 이름+날짜와 일치하는 휴무)** 이며, 이벤트 클릭으로 선택한 인원만 강조색(파랑, 연차보다 우선)으로 표시(다시 클릭하면 선택 해제).
+- 이벤트 제목: 일반 휴무 `이름 (n일)` / 대체휴무 `이름 (n일) 대체`(`n` 에 포함) / 공가 `이름 공가`(숫자 없음, 휴무·연차 누계 모두 미포함, 드래그·삭제 불가) / 연차 `이름 연차(n)`(`n` = 그 해 누적 사용 연차: 이전 달까지 확정분 `GET /annual-leave/usage?month=이전달` + 이번 달 날짜순 누계, 1월은 0부터. 휴무 누계 `(n일)` 에는 미포함). 색상은 기본 전원 흰색, **연차는 옅은 주황(`#ffe0b2`)**, **공가는 옅은 초록(`#c8e6c9`)**, **설정의 '원하는 휴일'로 받은 요청 휴무는 옅은 빨강(`#ffcdd2`, `leaveList` 의 이름+날짜와 일치하는 휴무)**. 이벤트 클릭으로 인원을 선택하면 그 인원의 일반 휴무는 강조색(파랑) 배경, 색이 있는 휴무(연차·공가·요청)는 **배경색을 유지**하고 파란 테두리+굵은 글씨(`kr-event-selected`)로 표시(다시 클릭하면 선택 해제).
 - 주말·공휴일 표시: 일요일 빨강·토요일 파랑 숫자, 공휴일은 배경색+이름 표시(`koreanHolidays.ts`, 2025~2027 정적 맵 — **연말에 다음 해 갱신 필요**). 알고리즘도 같은 맵을 읽는다(§3.2).
 - **인원 선택(강조)**: 확정본·미리보기 어느 상태에서든 이벤트 클릭 시 그 인원을 선택해 강조색으로 표시(다시 클릭하면 해제). `selectedEmployee` 상태, 달 이동해도 유지.
 - **미리보기 상태 또는 확정본이 있는 달(`canEdit`)** 에서 달력에서 직접 수정 가능, 경고 없이 바로 반영(위 인원 선택과 별개로 동시에 일어남).
@@ -149,7 +151,7 @@
 
 | 단계 | 내용 |
 |---|---|
-| 사전 확정 휴무 | 신청 휴무(의무 카운트 포함, 필수 근무일과 겹치면 무시) + 연차(카운트 제외) 반영 |
+| 사전 확정 휴무 | 신청 휴무(의무 카운트 포함, 필수 근무일과 겹치면 무시) + 연차·공가(카운트 제외) 반영 |
 | 평균 수준 계산 | (시도 밖, 1회) 총 휴무 공급(사전 휴무 + 인원별 남은 의무 휴무 + 평일 공휴일 크레딧)을 날짜에 고르게 부었을 때의 수준 `fairLevel` — `Σ max(사전휴무_d, ℓ) = 공급` 을 이분 탐색 |
 | 날짜 루프 | 연속 4일 도달자 강제 휴무(의무일수·간격 무관) → **`min(목표, floor(fairLevel))` 까지만** 배정(오래 못 쉰 사람 우선, 목표 간격→최소 간격 순). 예전엔 목표까지 1일부터 꽉 채워 앞쪽·사전휴무 많은 날에 몰리고 뒤쪽이 비었다 |
 | 부족일 보충 | 휴무 인원이 적은 날부터(레벨 0→1→…) 목표까지 한 명씩 채움 = 물 채우기. 휴무 적은 사람·기존 휴무와 먼 날 위주 |
@@ -205,18 +207,18 @@
 | GET | `/count` | 직원 수 |
 | POST | `/infos` | 직원 생성 |
 | PATCH / DELETE | `/infos/:id` | 직원 수정 / 삭제 |
-| **GET** | **`/schedule?month=YYYY-MM`** | 그 달의 확정 휴일/연차. `{ leaves: [{ agentId, name, jobLevel, date, type }] }`, `type` ∈ `leave`/`annual`/`comp` |
-| **POST** | **`/schedule/confirm`** | body `{ scheduleMonth, entries: [{ agentId, leaveDates[], compLeaveDates[], annualLeaveDates[] }] }`. 인원별 해당 월 통째 교체 저장(우선순위 `annual`>`comp`>`leave`) |
+| **GET** | **`/schedule?month=YYYY-MM`** | 그 달의 확정 휴일/연차. `{ leaves: [{ agentId, name, jobLevel, date, type }] }`, `type` ∈ `leave`/`annual`/`comp`/`official`(공가) |
+| **POST** | **`/schedule/confirm`** | body `{ scheduleMonth, entries: [{ agentId, leaveDates[], compLeaveDates[], annualLeaveDates[], officialLeaveDates[] }] }`. 인원별 해당 월 통째 교체 저장(우선순위 `annual`>`official`>`comp`>`leave`). 공가는 `annual-leave/usage` 집계에서 제외 |
 | **GET** | **`/annual-leave/usage?month=YYYY-MM`** | 그 해 1월~그 달까지 연차 누계 |
 | **GET / PUT** | **`/settings`** | 앱 전역 설정 조회/저장(키별 JSON 문자열) |
-| **POST** | **`/schedule/reset`** | `monthly_leaves` 재생성 + 직원 `description`/`annualleave`/`mandatory_workday` 비움. `app_settings` 는 유지 |
+| **POST** | **`/schedule/reset`** | `monthly_leaves` 재생성 + 직원 `description`/`annualleave`/`mandatory_workday`/`official_leave` 비움. `app_settings` 는 유지 |
 
 계층: `agentinfo.ctrl.ts` → `service/agentinfo.ts` → `model/agentinfoRepository.ts`. 오류는 `service/error.ts` 의
 `BadRequestError(400)/NotFoundError(404)/ServerError(500)` → `apis/module/error.ts` 에서 JSON 변환.
 
 **서버 기동 시 마이그레이션**(`main.ts` → `ensureAgentSchema()`): `agent_informations.mandatory_workday` 컬럼,
-`agent_informations.leave_days`(INT, 기본 8 — 기존 직원은 8 로 채워짐) 컬럼,
-`monthly_leaves.leave_type` 의 `'comp'` ENUM 값이 없으면 추가(`information_schema` 확인 후 `ALTER`, MySQL 5.7 대응).
+`agent_informations.leave_days`(INT, 기본 8 — 기존 직원은 8 로 채워짐) 컬럼, `agent_informations.official_leave`(공가) 컬럼,
+`monthly_leaves.leave_type` 의 `'comp'`/`'official'` ENUM 값이 없으면 추가(`information_schema` 확인 후 `ALTER`, MySQL 5.7 대응).
 
 ---
 
@@ -225,8 +227,8 @@
 ### 5.1 `agent_informations` — 직원 마스터
 
 `agent_information_id`(PK) · `created_at`(서버 정렬 기준, 클라이언트는 직급순 재정렬) · `name` · `job_level` ·
-`description`(원하는 휴일) · `annualleave`(연차 신청) · `mandatory_workday`(필수 근무일) — 이 3개는 전부 동일한
-`"YYYY-MM-DD, ..."` 콤마 문자열 형식 · `leave_days`(INT, 기본 8, 월 휴무 일수). "전체 초기화" 는 날짜 3개만 비우고
+`description`(원하는 휴일) · `annualleave`(연차 신청) · `official_leave`(공가 신청) · `mandatory_workday`(필수 근무일) — 이 4개는
+전부 동일한 `"YYYY-MM-DD, ..."` 콤마 문자열 형식 · `leave_days`(INT, 기본 8, 월 휴무 일수). "전체 초기화" 는 날짜 4개만 비우고
 `name`/`job_level`/`leave_days` 는 유지.
 
 ### 5.2 `app_settings` — 앱 전역 설정 (키-값)
@@ -237,7 +239,7 @@
 ### 5.3 `monthly_leaves` — 확정된 휴일/연차 이력 (하루 = 한 행)
 
 `monthly_leave_id`(PK) · `agent_information_id` · `schedule_month`(`'YYYY-MM'`, 조회용) · `leave_date`(DATE) ·
-`leave_type`(ENUM `leave`/`annual`/`comp`) · `confirmed_at`. UNIQUE `(agent_information_id, leave_date)`.
+`leave_type`(ENUM `leave`/`annual`/`comp`/`official`) · `confirmed_at`. UNIQUE `(agent_information_id, leave_date)`.
 
 - **확정 저장**(`replaceAgentMonthLeaves`): `entry.leaveDates`∪`compLeaveDates`∪`annualLeaveDates` 를 유형별로 합친 뒤,
   그 (직원, 달) 의 기존 행을 `DELETE` 하고 통째로 `INSERT` (트랜잭션). 다른 달·다른 직원 데이터는 그대로 남는다.
@@ -321,3 +323,9 @@
 
 - **직급순 생성** 버튼 + `generateLeaveSchedule(mode)` 의 `rank` 모드(§3.6). 기존 **휴무 생성** 은 그대로.
 - 비교 테스트용이라 이 변경은 커밋 하나에 모아 두었다 — 걷어낼 땐 그 커밋만 `git revert` 하면 버튼·`rank` 모드·§3.6·이 항목이 함께 빠진다.
+
+### 2026-10-26 — 선택 시 휴무 색 유지 / 공가
+
+- 달력에서 인원을 선택해도 요청 휴무(빨강)·연차(주황)·공가(초록)는 배경색을 유지하고, 선택은 파란 테두리+굵은 글씨로 표시.
+- 연차 타입 **공가**(개인 연차 소진 없음) 추가: 설정 표 `공가 신청` 열 → `agent_informations.official_leave` → 생성 시 연차처럼
+  사전 확정 휴무(의무 휴무 미포함) → 확정 시 `monthly_leaves.leave_type='official'`. 누적 사용 연차·달력 연차 번호에는 미포함.

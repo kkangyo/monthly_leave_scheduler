@@ -37,6 +37,9 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
   const [selectedDates, setSelectedDates] = useState<{ [key: number]: {name:string; date:DateObject[]} }>({});
   const [selectedAnnualleave, setSelectedAnnualleave] = useState<{ [key: number]: {name:string; date:DateObject[]} }>({});
   const [selectedMandatoryWork, setSelectedMandatoryWork] = useState<{ [key: number]: {name:string; date:DateObject[]} }>({});
+  // 공가 신청 (개인 연차 소진 없음): 설정 표 DatePicker 값 / 전체 달 이벤트 목록 — 연차와 같은 방식
+  const [selectedOfficialLeave, setSelectedOfficialLeave] = useState<{ [key: number]: {name:string; date:DateObject[]} }>({});
+  const [officialLeaveList, setOfficialLeaveList] = useState<EventInput[]>([]);
   const [leaveList, setLeaveList] = useState<EventInput[]>([]);
   const [annualLeaveList, setAnnualLeaveList] = useState<EventInput[]>([]);
   const [mandatoryWorkList, setMandatoryWorkList] = useState<EventInput[]>([]);
@@ -53,7 +56,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
   const [annualLeaveUsage, setAnnualLeaveUsage] = useState<{ [agentId: string]: number }>({}); // 인원별 누적 사용 연차
   // 현재 보고 있는 달의 확정 휴일/연차 (서버 저장본)
   const [monthlySchedule, setMonthlySchedule] = useState<
-    { agentId: string; name: string; jobLevel: string; date: string; type: "leave" | "annual" | "comp" }[]
+    { agentId: string; name: string; jobLevel: string; date: string; type: "leave" | "annual" | "comp" | "official" }[]
   >([]);
   // 바로 이전 달의 확정 휴일/연차 — 휴무 생성 시 이전 달 말 연속 근무를 이어서 보기 위함 (확정본 없으면 leaves 빈 배열)
   // 메인 달력 달(currentMonth) '이전 달까지' 그 해 누적 사용 연차 (1월이면 비어있음) — 달력의 '이름 연차(n)' 계산용
@@ -63,7 +66,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
   }>({ month: "", usage: {} });
   const [prevMonthSchedule, setPrevMonthSchedule] = useState<{
     month: string;
-    leaves: { agentId: string; name: string; jobLevel: string; date: string; type: "leave" | "annual" | "comp" }[];
+    leaves: { agentId: string; name: string; jobLevel: string; date: string; type: "leave" | "annual" | "comp" | "official" }[];
   }>({ month: "", leaves: [] });
   const appSettingsLoadedRef = useRef(false); // 서버 설정 최초 로드 완료 여부
   // 한국 공휴일 (작년~내년, 서버가 매월 공공데이터 API 로 갱신) — 받기 전엔 휴무 생성을 막는다
@@ -115,25 +118,25 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
 
   // 표 전체 일괄 저장: 신규 추가/기존 수정/삭제 체크된 행을 한 번에 서버에 반영하고 마지막에 한 번만 목록을 새로고침
   const handleBulkSaveAgents = async (
-    creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[],
-    updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[],
-    deletes: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number }[]
+    creates: { name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number; officialleave: string }[],
+    updates: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number; officialleave: string }[],
+    deletes: { id: string; name: string; joblevel: string; description: string; annualleave: string; mandatoryworkday: string; leavedays: number; officialleave: string }[]
   ) => {
     const errors: string[] = [];
 
     for (const c of creates) {
-      const { name, joblevel, description, annualleave, mandatoryworkday, leavedays } = c;
-      const result = await agentAPI.createAgentinfo({ name, joblevel, description, annualleave, mandatoryworkday, leavedays });
+      const { name, joblevel, description, annualleave, mandatoryworkday, leavedays, officialleave } = c;
+      const result = await agentAPI.createAgentinfo({ name, joblevel, description, annualleave, mandatoryworkday, leavedays, officialleave });
       if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
     }
     for (const u of updates) {
-      const { id, name, joblevel, description, annualleave, mandatoryworkday, leavedays } = u;
-      const result = await agentAPI.updateAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday, leavedays });
+      const { id, name, joblevel, description, annualleave, mandatoryworkday, leavedays, officialleave } = u;
+      const result = await agentAPI.updateAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday, leavedays, officialleave });
       if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
     }
     for (const d of deletes) {
-      const { id, name, joblevel, description, annualleave, mandatoryworkday, leavedays } = d;
-      const result = await agentAPI.deleteAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday, leavedays });
+      const { id, name, joblevel, description, annualleave, mandatoryworkday, leavedays, officialleave } = d;
+      const result = await agentAPI.deleteAgentinfo(id, { name, joblevel, description, annualleave, mandatoryworkday, leavedays, officialleave });
       if (result.statusCode === 400) errors.push(`[${name}] ${result.detail[0].constraints.isLength}`);
     }
 
@@ -228,6 +231,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
       leaveDates: string[];
       annualLeaveDates: string[];
       compLeaveDates?: string[];
+      officialLeaveDates?: string[];
     }[]
   ) => {
     const result = await agentAPI.confirmMonthlySchedule({ scheduleMonth, entries });
@@ -248,6 +252,8 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     const selectedannualleaveMapping:EventInput[] = [];
     const selectedMWDatesMapping: { [key: number]: {name:string; date:DateObject[]} } = {};
     const selectedmandatoryworkMapping:EventInput[] = [];
+    const selectedOLDatesMapping: { [key: number]: {name:string; date:DateObject[]} } = {};
+    const selectedofficialleaveMapping:EventInput[] = [];
 
     // 설정 표(DatePicker)에는 설정 창에서 보고 있는 달(settingsMonth 'YYYY-MM')의 값만 보여준다 — 없으면 빈칸, 있으면 그 달 값만.
     //  달을 바꿀 때마다 이 값도 다시 계산되도록 아래 useEffect 의존성 배열에 settingsMonth 를 넣어뒀다.
@@ -259,17 +265,20 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         const description = agent.description;
         const annualleave = agent.annualleave;
         const mandatory_workday = agent.mandatory_workday || '';
+        const official_leave = agent.official_leave || '';
         const name = agent.name;
         // 빈 값('')은 날짜가 없는 것으로 처리 (초기화된 직원 등). 이 목록은 전체 달 이력 그대로 유지 —
         //  스케줄 생성 알고리즘(App.tsx)이 대상 월만 알아서 다시 걸러 쓴다.
         const serverDates = description.split(',').map((date: string) => date.trim()).filter((date: string) => date.length > 0);
         const serverANDates = annualleave.split(',').map((date: string) => date.trim()).filter((date: string) => date.length > 0);
         const serverMWDates = mandatory_workday.split(',').map((date: string) => date.trim()).filter((date: string) => date.length > 0);
+        const serverOLDates = official_leave.split(',').map((date: string) => date.trim()).filter((date: string) => date.length > 0);
 
         // 설정 표에 표시할 값은 지금 보는 달만 추림
         const monthDates = monthPrefix ? serverDates.filter((d: string) => d.startsWith(monthPrefix)) : serverDates;
         const monthANDates = monthPrefix ? serverANDates.filter((d: string) => d.startsWith(monthPrefix)) : serverANDates;
         const monthMWDates = monthPrefix ? serverMWDates.filter((d: string) => d.startsWith(monthPrefix)) : serverMWDates;
+        const monthOLDates = monthPrefix ? serverOLDates.filter((d: string) => d.startsWith(monthPrefix)) : serverOLDates;
 
         const toDateObjects = (list: string[]) =>
           list.map((dateStr: string) => {
@@ -280,6 +289,8 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         selectedDatesMapping[rowid] = { name, date: toDateObjects(monthDates) };
         selectedANDatesMapping[rowid] = { name, date: toDateObjects(monthANDates) };
         selectedMWDatesMapping[rowid] = { name, date: toDateObjects(monthMWDates) };
+        selectedOLDatesMapping[rowid] = { name, date: toDateObjects(monthOLDates) };
+        selectedofficialleaveMapping.push(...serverOLDates.map((date: string) => ({ title: name, start: date })));
 
         const eventInput:EventInput[] = serverDates.map((date: string) => {
           return {title:name,start:date};
@@ -312,6 +323,10 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
       // 필수 근무일 업데이트
       setMandatoryWorkList(selectedmandatoryworkMapping);
       setSelectedMandatoryWork(selectedMWDatesMapping);
+
+      // 공가 업데이트
+      setOfficialLeaveList(selectedofficialleaveMapping);
+      setSelectedOfficialLeave(selectedOLDatesMapping);
     }
   };
 
@@ -406,6 +421,8 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         selectedDates,
         selectedAnnualleave,
         selectedMandatoryWork,
+        selectedOfficialLeave,
+        officialLeaveList,
         leaveList,
         annualLeaveList,
         mandatoryWorkList,
@@ -431,6 +448,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         setSelectedDates,
         setSelectedAnnualleave,
         setSelectedMandatoryWork,
+        setSelectedOfficialLeave,
         setSelectedDateList,
         setScheduleEssentialWork,
         setDirectorFullQuota,
