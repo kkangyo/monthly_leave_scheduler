@@ -525,6 +525,7 @@ const Table: React.FC<TableProps> = ({ onResetAll, isResetting, dirtyCheckRef })
                       <option value="점장">점장</option>
                       <option value="1층 매니저">1층 매니저</option>
                       <option value="2층 매니저">2층 매니저</option>
+                      <option value="1층 부점장">1층 부점장</option>
                       <option value="2층 부점장">2층 부점장</option>
                       <option value="1층 대리">1층 대리</option>
                       <option value="2층 대리">2층 대리</option>

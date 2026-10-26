@@ -58,6 +58,8 @@ function App() {
     { name: string; date: string; type: "leave" | "comp" | "annual" }[]
   >([]);
   const [generatedMonth, setGeneratedMonth] = useState<string>("");
+  // 수정본(generatedLeaves)의 출처 (미리보기 안내 문구용): 휴무 생성 / 확정본 수정
+  const [generatedMethod, setGeneratedMethod] = useState<"generate" | "edit">("generate");
   const [isConfirming, setIsConfirming] = useState(false);
   // 달력 수동 편집(미리보기 전용): 삭제 아이콘이 떠 있는 이벤트("이름|날짜") / 추가 위젯이 열려있는 날짜
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -181,17 +183,18 @@ function App() {
     // 점장을 알고리즘의 휴무 배정(의무 휴무 쿼터·강제휴무·대체휴무 등)에서 뺄지 여부.
     //  directorFullQuota = false(기본): 사전 확정 휴무일에만 쉼 / true: 다른 직원과 동일하게 배정 대상
     const directorExempt = (e: Agentinfo) => isDirector(e) && !directorFullQuota;
-    const isTopAdmin = (e: Agentinfo) => e.job_level === "점장" || e.job_level === "2층 부점장"; // 점장·부점장
+    const isTopAdmin = (e: Agentinfo) =>
+      e.job_level === "점장" || e.job_level === "1층 부점장" || e.job_level === "2층 부점장"; // 점장·부점장
     const isPureManager = (e: Agentinfo) => e.job_level === "1층 매니저" || e.job_level === "2층 매니저";
     const isSenior = (e: Agentinfo) => isTopAdmin(e) || isPureManager(e); // 책임급 (점장·매니저·부점장)
     // 각 층 소속 인원 (점장은 층 고정이 아니라 '유동' — 부족한 층을 메움, floorCoverageOk 참고)
     const isFirstFloor = (e: Agentinfo) =>
-      e.job_level === "1층 사원" || e.job_level === "1층 대리" || e.job_level === "1층 매니저";
+      e.job_level === "1층 사원" || e.job_level === "1층 대리" || e.job_level === "1층 매니저" || e.job_level === "1층 부점장";
     const isSecondFloor = (e: Agentinfo) =>
       e.job_level === "2층 사원" || e.job_level === "2층 대리" || e.job_level === "2층 매니저" || e.job_level === "2층 부점장";
     // 각 층 '대리급 이상' (점장 제외한 순수 층 리드)
     const isFirstFloorLeadPure = (e: Agentinfo) =>
-      e.job_level === "1층 매니저" || e.job_level === "1층 대리";
+      e.job_level === "1층 부점장" || e.job_level === "1층 매니저" || e.job_level === "1층 대리";
     const isSecondFloorLeadPure = (e: Agentinfo) =>
       e.job_level === "2층 부점장" || e.job_level === "2층 매니저" || e.job_level === "2층 대리";
 
@@ -1074,6 +1077,7 @@ function App() {
       return;
     }
     generateLeaveSchedule();
+    setGeneratedMethod("generate");
   };
 
   // 달력에 표시할 이벤트: 이번 달을 방금 생성했으면 그 제안, 아니면 서버 저장본
@@ -1155,6 +1159,7 @@ function App() {
     }));
     setGeneratedLeaves(edit(base));
     setGeneratedMonth(currentMonth);
+    setGeneratedMethod("edit");
   };
 
   // 수정본 버리기 → 다시 서버 확정본 표시
@@ -1388,7 +1393,9 @@ function App() {
       <div style={{ height: "10px" }}></div>
       {isPreview && (
         <div style={{ textAlign: 'center', color: '#d35400', fontSize: '14px' }}>
-          {monthlySchedule.length > 0 ? '확정본을 수정 중입니다' : '생성된 휴무 미리보기입니다'} — '확정'을 눌러야 저장됩니다.
+          {generatedMethod === "edit"
+            ? '확정본을 수정 중입니다'
+            : '생성된 휴무 미리보기입니다'} — '확정'을 눌러야 저장됩니다.
         </div>
       )}
       <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '10px', marginBottom: '30px' }}>
