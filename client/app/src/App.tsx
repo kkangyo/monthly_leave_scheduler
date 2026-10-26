@@ -298,6 +298,41 @@ function App() {
     applyPreset(leaveList, true);
     applyPreset(annualLeaveList, false);
 
+    //#################### 1-A. 하루 평균 휴무 수준(물 채우기 수준) — 휴무 몰림 방지용
+    //  이번 달 전체 휴무 공급(사전 확정 휴무 + 인원별 남은 의무 휴무 + 평일 공휴일 대체휴무)을 날짜에 고르게
+    //  부었을 때의 수준 ℓ 을 구한다: Σ_d max(사전휴무_d, ℓ) = 총 공급. 사전 휴무가 ℓ 보다 많은 날은 그대로 두고
+    //  나머지 날들이 같은 높이가 되는 값이다. 2-1 단계는 이 수준의 내림(floor)까지만 채우고, 나머지는 3단계
+    //  (휴무 적은 날부터 채우기)가 낮은 날부터 한 명씩 얹는다 → 1일부터 순서대로 꽉 채워서 앞쪽·사전휴무 많은
+    //  날에 몰리고 뒤쪽이 비는 현상을 막는다.
+    const openDays: number[] = [];
+    for (let d = 1; d <= daysInMonth; d++) if (!offday.includes(d)) openDays.push(d);
+    const presetPerDay: { [day: number]: number } = {};
+    basePreLeaves.forEach((l) => { presetPerDay[l.day] = (presetPerDay[l.day] || 0) + 1; });
+    const weekdayHolidayCredit = alteroffday.filter((d) => !isWeekendDay(d)).length;
+    const totalLeaveSupply =
+      basePreLeaves.length +
+      agentData.reduce(
+        (sum, emp) =>
+          directorExempt(emp)
+            ? sum
+            : sum + Math.max(0, baseQuotaOf(emp.name) + weekdayHolidayCredit - baseLeaveCounter[emp.name]),
+        0
+      );
+    let fairLevel = 0;
+    {
+      let lo = 0;
+      let hi = agentData.length;
+      for (let it = 0; it < 40; it++) {
+        const mid = (lo + hi) / 2;
+        const filled = openDays.reduce((sum, d) => sum + Math.max(presetPerDay[d] || 0, mid), 0);
+        if (filled > totalLeaveSupply) hi = mid;
+        else lo = mid;
+      }
+      fairLevel = lo;
+    }
+    const baseFillLevel = Math.floor(fairLevel + 1e-9);
+    log("fairLevel", fairLevel, "supply", totalLeaveSupply);
+
     //#################### 2. 한 번의 스케줄 생성 시도 (랜덤 기반)
     const randomBuffer = new Uint32Array(1);
     const randInt = (n: number) => {
@@ -517,8 +552,10 @@ function App() {
         //  1순위: 목표 간격(minWorkGap+1) 지난 사람 / 2순위: 최소 간격(minWorkGap)만 지난 사람.
         //  "매일 최소 1명"은 이제 위 1-1 단계가 이미 보장했으니, 여기는 단순하게 나머지 목표 인원만
         //  채우면 된다 — 예전처럼 복잡한 목표일 공식을 쓸 필요가 없어졌다.
+        //  단, 목표 인원이 아니라 '평균 수준(baseFillLevel)'까지만 채운다(1-A 참고). 남는 휴무는 3단계가 고르게 배분.
+        const dayFillCap = Math.min(leaveTargetOf(day), baseFillLevel);
         const fillToTarget = (minGap: number) => {
-          while (offDutyEmployees[date].length < leaveTargetOf(day)) {
+          while (offDutyEmployees[date].length < dayFillCap) {
             const pool = baseCandidates
               .filter((emp) => !assigned.has(emp.name) && daysSinceLeave(emp.name, day) >= minGap)
               .sort((a, b) => daysSinceLeave(b.name, day) - daysSinceLeave(a.name, day));
@@ -618,8 +655,9 @@ function App() {
               });
             }
             if (dayCandidates.length === 0) break;
-            // 기존 휴무와 멀리 떨어지고(gap 큼) 그 날 휴무자가 적은(occ 작음) 날 우선
-            dayCandidates.sort((a, b) => b.gap - a.gap || a.occ - b.occ);
+            // 그 날 휴무자가 적은(occ 작음) 날 우선, 같으면 기존 휴무와 멀리 떨어진(gap 큼) 날.
+            //  (예전엔 gap 을 먼저 봐서 이미 여러 명 쉬는 날에도 얹혀 몰림이 생겼다. 간격은 위 minGap 필터가 보장)
+            dayCandidates.sort((a, b) => a.occ - b.occ || b.gap - a.gap);
             const choice = dayCandidates[randInt(Math.min(3, dayCandidates.length))];
 
             employeeleaveSchedule[employee.name].push(choice.date);
@@ -637,6 +675,27 @@ function App() {
           }
         }
       });
+
+      const presetDateSet = new Set(basePreLeaves.map((l) => `${l.name}|${l.date}`));
+
+      // 인원의 휴무일 목록으로 연속 근무 구간 길이들 계산 (이전 달 이어받기·매장 전체 휴무일 반영)
+      const streaksOf = (name: string, dates: string[]): number[] => {
+        const ds = dates
+          .map((d) => parseInt(d.split("-")[2], 10))
+          .concat(offday)
+          .sort((a, b) => a - b);
+        let prev = prevLastLeave[name] ?? 0;
+        const out: number[] = [];
+        [...ds, daysInMonth + 1].forEach((d) => {
+          out.push(Math.max(0, d - prev - 1));
+          prev = d;
+        });
+        return out;
+      };
+      const longestStreak = (name: string, dates: string[]): number => Math.max(0, ...streaksOf(name, dates));
+      // 4일 초과 연속 근무의 총 초과일 (0 이면 규칙 준수)
+      const overStreak = (name: string, dates: string[]): number =>
+        streaksOf(name, dates).reduce((sum, len) => sum + Math.max(0, len - (maxWorkGap - 1)), 0);
 
       //#################### 5-1. 연속 근무 5일 이상 구간 잘라내기 (최대 4일 연속 근무 규칙)
       //  각 인원의 휴무 사이(그리고 월초~첫휴무, 마지막휴무~월말) 간격이 maxWorkGap 이상이면
@@ -656,32 +715,99 @@ function App() {
             const to = marks[k + 1];
             if (to - from - 1 < maxWorkGap) continue; // 연속 근무 4일 이하 → OK
 
-            // 구간 중앙에서 바깥쪽으로 탐색하며 배치 가능한 근무일을 찾는다
-            const mid = Math.round((from + to) / 2);
+            // 구간 안 후보일 정렬: ① 양쪽 남는 연속 근무가 모두 4일 이하가 되는 날 ② 그 날 휴무자가 적은 날
+            //  ③ 구간 중앙에 가까운 날. (예전엔 중앙부터만 봐서 이미 여러 명 쉬는 날에도 얹혀 몰림이 생겼다)
+            const mid = (from + to) / 2;
+            const cands: number[] = [];
+            for (let cand = Math.max(from + 1, 1); cand < to; cand++) {
+              if (offday.includes(cand)) continue;
+              const date = dateOf(cand);
+              if (isMandatoryWork(emp.name, date)) continue;
+              if (employeeleaveSchedule[emp.name].includes(date)) continue;
+              cands.push(cand);
+            }
+            const splitOk = (c: number) => c - from - 1 < maxWorkGap && to - c - 1 < maxWorkGap;
+            const occOf = (c: number) => offDutyEmployees[dateOf(c)]?.length ?? 0;
+            cands.sort(
+              (a, b) =>
+                Number(splitOk(b)) - Number(splitOk(a)) ||
+                occOf(a) - occOf(b) ||
+                Math.abs(a - mid) - Math.abs(b - mid)
+            );
             let placed = false;
-            for (let step = 0; step <= to - from && !placed; step++) {
-              for (const cand of step === 0 ? [mid] : [mid - step, mid + step]) {
-                if (cand <= from || cand >= to || cand < 1) continue;
-                if (offday.includes(cand)) continue;
-                const date = dateOf(cand);
-                if (isMandatoryWork(emp.name, date)) continue;
-                if (employeeleaveSchedule[emp.name].includes(date)) continue;
-                employeeleaveSchedule[emp.name].push(date);
-                const dw = agentData.filter((e) => !employeeleaveSchedule[e.name].includes(date));
-                if (checkConditionToLeave(date, dw, emp, false)) {
-                  leaveCounter[emp.name] += 1;
-                  lastLeaveDay[emp.name] = cand;
-                  allLeaves.push({ name: emp.name, date, day: cand });
-                  if (!offDutyEmployees[date]) offDutyEmployees[date] = [];
-                  offDutyEmployees[date].push(emp.name);
-                  placed = true;
-                  progressed = true;
-                } else {
-                  employeeleaveSchedule[emp.name].pop();
-                }
+            for (const cand of cands) {
+              if (placed) break;
+              const date = dateOf(cand);
+              employeeleaveSchedule[emp.name].push(date);
+              const dw = agentData.filter((e) => !employeeleaveSchedule[e.name].includes(date));
+              if (checkConditionToLeave(date, dw, emp, false)) {
+                leaveCounter[emp.name] += 1;
+                lastLeaveDay[emp.name] = cand;
+                allLeaves.push({ name: emp.name, date, day: cand });
+                if (!offDutyEmployees[date]) offDutyEmployees[date] = [];
+                offDutyEmployees[date].push(emp.name);
+                placed = true;
+                progressed = true;
+              } else {
+                employeeleaveSchedule[emp.name].pop();
               }
             }
           }
+        }
+      });
+
+      //#################### 5-1b. 그래도 남은 5일 이상 연속 근무 → 휴무 '이동'으로 해소
+      //  신청 휴일이 앞쪽에 몰린 사람 등은 의무 휴무를 이미 다 써서 5-1 이 휴무를 더 넣을 수 없다. 그래서 그 사람의
+      //  알고리즘 휴무 하나를 긴 연속 근무 구간 안으로 옮긴다(총 휴무 일수 그대로). 옮긴 결과 4일 초과 연속 근무의
+      //  총량이 줄어드는 경우만 허용, 도착 날은 휴무자가 적은 날 우선, 최소 근무 인원 조건(완화)을 지킨다.
+      //  공휴일(대체휴무 크레딧이 근무 여부에 달린 날)·사전 확정 휴무·필수 근무일은 건드리지 않는다.
+      agentData.forEach((emp) => {
+        if (directorExempt(emp)) return;
+        const name = emp.name;
+        let guard = 0;
+        while (guard++ < 10 && overStreak(name, employeeleaveSchedule[name]) > 0) {
+          const current = employeeleaveSchedule[name];
+          const currentOver = overStreak(name, current);
+          const occOf = (date: string) => offDutyEmployees[date]?.length ?? 0;
+          const sources = current
+            .filter((d) => !presetDateSet.has(`${name}|${d}`) && !alteroffday.includes(parseInt(d.split("-")[2], 10)))
+            .sort((a, b) => occOf(b) - occOf(a)); // 휴무자가 많은 날에서 빼는 것 우선
+          const targets: number[] = [];
+          for (let day = 1; day <= daysInMonth; day++) {
+            if (offday.includes(day) || alteroffday.includes(day)) continue;
+            const date = dateOf(day);
+            if (current.includes(date) || isMandatoryWork(name, date)) continue;
+            targets.push(day);
+          }
+          targets.sort((a, b) => occOf(dateOf(a)) - occOf(dateOf(b)));
+
+          let moved = false;
+          for (const toDay of targets) {
+            const toDate = dateOf(toDay);
+            for (const fromDate of sources) {
+              const next = [...current.filter((d) => d !== fromDate), toDate];
+              if (overStreak(name, next) >= currentOver) continue;
+              employeeleaveSchedule[name] = next;
+              const dw = agentData.filter((e) => !employeeleaveSchedule[e.name].includes(toDate));
+              if (!offDutyEmployees[toDate]) offDutyEmployees[toDate] = [];
+              offDutyEmployees[toDate].push(name);
+              if (!checkConditionToLeave(toDate, dw, emp, false)) {
+                offDutyEmployees[toDate].pop();
+                employeeleaveSchedule[name] = current;
+                continue;
+              }
+              offDutyEmployees[fromDate] = (offDutyEmployees[fromDate] || []).filter((n) => n !== name);
+              const rec = allLeaves.find((l) => l.name === name && l.date === fromDate);
+              if (rec) {
+                rec.date = toDate;
+                rec.day = toDay;
+              }
+              moved = true;
+              break;
+            }
+            if (moved) break;
+          }
+          if (!moved) break;
         }
       });
 
@@ -697,7 +823,6 @@ function App() {
       //  휴무 일수는 그대로 두므로(=의무 휴무 조건을 절대 깨지 않음) "이동"만 하고, 사전 확정 휴무
       //  (신청 휴일/연차)는 옮기지 않으며, 옮긴 뒤에도 그 날짜의 일반 조건(strict)과 최소 근무 간격을
       //  반드시 지킨다.
-      const presetDateSet = new Set(basePreLeaves.map((l) => `${l.name}|${l.date}`));
 
       const tryRebalanceMove = (groupDays: number[]): boolean => {
         const counts = groupDays.map((d) => ({ day: d, count: offDutyEmployees[dateOf(d)]?.length ?? 0 }));
@@ -728,6 +853,10 @@ function App() {
                 999
               );
               if (gapToOthers < minWorkGap) continue; // 옮긴 뒤에도 최소 근무 간격은 지켜야 함
+              // 원래 날짜에서 휴무를 빼면 그 자리에 긴 연속 근무가 생길 수 있다 → 4일(또는 기존 최장) 초과 금지
+              const before = longestStreak(name, employeeleaveSchedule[name]);
+              const after = longestStreak(name, [...otherDates, toDate]);
+              if (after > Math.max(maxWorkGap - 1, before)) continue;
 
               const original = employeeleaveSchedule[name];
               employeeleaveSchedule[name] = [...otherDates, toDate];
@@ -820,6 +949,21 @@ function App() {
         penalty += variance * 45;
       }
 
+      // (3-1) 알고리즘이 만든 몰림: 평일끼리·주말끼리, '그룹 최소 휴무 인원 + 1' 을 넘는 날의 초과 인원.
+      //  사전 확정 휴무(신청 휴일·연차)만으로 많은 날은 어쩔 수 없으니 그 수까지는 봐준다.
+      const clumpPenaltyFor = (groupDays: number[]) => {
+        if (groupDays.length === 0) return 0;
+        const countOf = (d: number) => st.offDutyEmployees[dateOf(d)]?.length ?? 0;
+        const floorCount = Math.min(...groupDays.map(countOf));
+        return groupDays.reduce(
+          (sum, d) => sum + Math.max(0, countOf(d) - Math.max(presetPerDay[d] || 0, floorCount + 1)),
+          0
+        );
+      };
+      const wdDays = openDays.filter((d) => !isWeekendDay(d));
+      const weDays = openDays.filter((d) => isWeekendDay(d));
+      penalty += (clumpPenaltyFor(wdDays) + clumpPenaltyFor(weDays)) * 150;
+
       // (4) 인원별 연속 근무일: 목표 3일 이하, 예외 4일, 5일 이상은 심각
       const maxStreakAllowed = maxWorkGap - 1; // 4일
       agentData.forEach((emp) => {
@@ -909,7 +1053,16 @@ function App() {
     setGeneratedMonth(ym);
   };
 
+  // 확정 안 된 수정본(generatedLeaves)은 한 달치만 보관한다. 다른 달의 수정본을 버리게 되면 먼저 확인
+  const confirmDiscardOtherDraft = (): boolean =>
+    !generatedMonth ||
+    generatedMonth === currentMonth ||
+    window.confirm(
+      `${formatMonthLabel(generatedMonth)} 에 확정하지 않은 수정 내용이 있습니다.\n계속하면 사라집니다. 계속할까요?`
+    );
+
   const genSch = () => {
+    if (!confirmDiscardOtherDraft()) return;
     if (
       monthlySchedule.length > 0 &&
       !window.confirm(
@@ -962,20 +1115,49 @@ function App() {
       });
   };
 
-  // 미리보기(생성 후·확정 전) 상태인지 — 이때만 달력 드래그 이동을 허용
-  const isPreview =
-    !!generatedMonth && generatedMonth === currentMonth && generatedLeaves.length > 0;
+  // 미리보기(생성했거나 확정본을 고친 뒤·확정 전) 상태인지 — 이때 달력은 수정본(generatedLeaves)을 보여준다
+  const isPreview = !!generatedMonth && generatedMonth === currentMonth;
+  // 달력에서 드래그/추가/삭제가 가능한지: 미리보기거나, 이 달에 확정본이 있으면(첫 수정 때 수정본으로 복사)
+  const canEdit = isPreview || monthlySchedule.length > 0;
+
+  // 달력 수정 반영: 미리보기면 수정본을, 아니면 확정본을 복사해 수정본으로 만든 뒤 고친다.
+  //  수정본은 '확정'을 눌러야 서버에 덮어써 저장된다.
+  const updateDraft = (
+    edit: (list: { name: string; date: string; type: "leave" | "comp" | "annual" }[]) =>
+      { name: string; date: string; type: "leave" | "comp" | "annual" }[],
+    alreadyConfirmed = false // 호출한 쪽에서 다른 달 수정본 폐기를 이미 확인했으면 true
+  ) => {
+    if (isPreview) {
+      setGeneratedLeaves(edit);
+      return;
+    }
+    if (!alreadyConfirmed && !confirmDiscardOtherDraft()) return;
+    const base = monthlySchedule.map((l: { name: string; date: string; type: "leave" | "comp" | "annual" }) => ({
+      name: l.name,
+      date: l.date,
+      type: l.type,
+    }));
+    setGeneratedLeaves(edit(base));
+    setGeneratedMonth(currentMonth);
+  };
+
+  // 수정본 버리기 → 다시 서버 확정본 표시
+  const discardDraft = () => {
+    if (!window.confirm("확정하지 않은 수정 내용을 버릴까요?")) return;
+    setGeneratedLeaves([]);
+    setGeneratedMonth("");
+  };
 
   const calendarEvents = useMemo(() => {
     if (isPreview) {
       return buildCalendarEvents(generatedLeaves, true);
     }
-    return buildCalendarEvents(monthlySchedule);
+    return buildCalendarEvents(monthlySchedule, canEdit);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPreview, generatedLeaves, monthlySchedule, agentData, selectedEmployee]);
+  }, [isPreview, canEdit, generatedLeaves, monthlySchedule, agentData, selectedEmployee]);
 
-  // 달력에서 휴무를 다른 날짜로 드래그 → 미리보기(generatedLeaves) 갱신.
-  //  확정 전이므로 별도 경고 없이 반영. 이후 '확정'을 누르면 이 값 그대로 저장됨.
+  // 달력에서 휴무를 다른 날짜로 드래그 → 수정본(generatedLeaves) 갱신(확정본이면 복사 후 수정).
+  //  별도 경고 없이 반영. 이후 '확정'을 누르면 이 값 그대로 저장됨.
   const handleEventDrop = (info: EventDropArg) => {
     const name: string = info.event.extendedProps?.name;
     const oldDate = info.oldEvent.startStr; // "YYYY-MM-DD"
@@ -984,13 +1166,20 @@ function App() {
 
     // 보이는 달 밖으로 이동 / 같은 사람이 그 날 이미 휴무 → 되돌림
     const outOfMonth = !newDate.startsWith(`${currentMonth}-`);
-    const clash = generatedLeaves.some((l) => l.name === name && l.date === newDate);
+    const current = isPreview ? generatedLeaves : monthlySchedule;
+    const clash = current.some((l: { name: string; date: string }) => l.name === name && l.date === newDate);
     if (outOfMonth || clash) {
       info.revert();
       return;
     }
-    setGeneratedLeaves((prev) =>
-      prev.map((l) => (l.name === name && l.date === oldDate ? { ...l, date: newDate } : l))
+    // 다른 달 수정본을 버리지 않기로 하면 드래그도 되돌린다
+    if (!isPreview && !confirmDiscardOtherDraft()) {
+      info.revert();
+      return;
+    }
+    updateDraft(
+      (prev) => prev.map((l) => (l.name === name && l.date === oldDate ? { ...l, date: newDate } : l)),
+      true
     );
   };
 
@@ -999,15 +1188,15 @@ function App() {
     setPendingDeleteId(null);
     setAddDate(null);
     setAddSelection("");
-  }, [currentMonth, isPreview]);
+  }, [currentMonth, canEdit]);
 
   // 휴무 이벤트 클릭 → 그 인원을 선택(같은 인원 다시 클릭하면 선택 해제)해 달력에서 강조 표시.
-  //  미리보기 상태면 추가로 삭제 아이콘 토글(같은 걸 다시 클릭하면 숨김). 연차는 삭제 대상 아님(표에서 관리)
+  //  수정 가능 상태(미리보기·확정본)면 추가로 삭제 아이콘 토글(같은 걸 다시 클릭하면 숨김). 연차는 삭제 대상 아님(표에서 관리)
   const handleEventClick = (info: EventClickArg) => {
     const name = info.event.extendedProps?.name as string | undefined;
     if (name) setSelectedEmployee((prev) => (prev === name ? null : name));
 
-    if (!isPreview) return;
+    if (!canEdit) return;
     const ltype = info.event.extendedProps?.ltype as string | undefined;
     if (ltype === "annual") return;
     setAddDate(null); // 다른 곳에서 열려있던 추가 위젯은 닫기
@@ -1015,9 +1204,9 @@ function App() {
     setPendingDeleteId((prev) => (prev === id ? null : id));
   };
 
-  // 삭제 아이콘 클릭 → generatedLeaves 에서 제거
+  // 삭제 아이콘 클릭 → 수정본에서 제거
   const handleDeleteLeave = (name: string, date: string) => {
-    setGeneratedLeaves((prev) => prev.filter((l) => !(l.name === name && l.date === date)));
+    updateDraft((prev) => prev.filter((l) => !(l.name === name && l.date === date)));
     setPendingDeleteId(null);
   };
 
@@ -1025,7 +1214,7 @@ function App() {
   const renderEventContent = (arg: EventContentArg): React.ReactNode => {
     const id = arg.event.id;
     const ltype = arg.event.extendedProps?.ltype as string | undefined;
-    const showX = isPreview && ltype !== "annual" && id === pendingDeleteId;
+    const showX = canEdit && ltype !== "annual" && id === pendingDeleteId;
     return (
       <div className="kr-event-row">
         <span className="kr-event-title">{arg.event.title}</span>
@@ -1048,7 +1237,7 @@ function App() {
 
   // 빈 날짜 클릭 → 그 날짜의 인원 추가 위젯 토글 (같은 날짜를 다시 클릭하면 닫힘)
   const handleDateClick = (info: DateClickArg) => {
-    if (!isPreview) return;
+    if (!canEdit) return;
     if (!info.dateStr.startsWith(`${currentMonth}-`)) return; // 보이는 달 밖 셀은 무시
     setPendingDeleteId(null); // 다른 곳에서 열려있던 삭제 아이콘은 닫기
     setAddDate((prev) => (prev === info.dateStr ? null : info.dateStr));
@@ -1057,10 +1246,9 @@ function App() {
 
   // 날짜 셀에 덧붙이는 "인원 추가" 위젯 (addDate 와 일치하는 날짜에만 표시)
   const renderDayExtra = (dateStr: string): React.ReactNode => {
-    if (!isPreview || addDate !== dateStr) return null;
-    const already = new Set(
-      generatedLeaves.filter((l) => l.date === dateStr).map((l) => l.name)
-    );
+    if (!canEdit || addDate !== dateStr) return null;
+    const current: { name: string; date: string }[] = isPreview ? generatedLeaves : monthlySchedule;
+    const already = new Set(current.filter((l) => l.date === dateStr).map((l) => l.name));
     const candidates = agentData.filter((a) => !already.has(a.name));
     return (
       <div
@@ -1085,7 +1273,7 @@ function App() {
           disabled={!addSelection}
           onClick={() => {
             if (!addSelection) return;
-            setGeneratedLeaves((prev) => [...prev, { name: addSelection, date: dateStr, type: "leave" }]);
+            updateDraft((prev) => [...prev, { name: addSelection, date: dateStr, type: "leave" }]);
             setAddDate(null);
             setAddSelection("");
           }}
@@ -1114,11 +1302,11 @@ function App() {
     }
   };
 
-  // 생성된 스케줄을 확인하고 마음에 들면 서버에 확정 저장
+  // 생성(또는 확정본을 수정)한 스케줄을 서버에 확정 저장 — 그 달 기존 확정본은 통째로 덮어쓴다
   const confirmGeneratedSchedule = async () => {
     if (isConfirming) return;
-    if (generatedLeaves.length === 0) {
-      alert("먼저 Generate 로 스케줄을 생성하세요.");
+    if (!isPreview) {
+      alert("먼저 휴무를 생성하거나 달력에서 수정하세요.");
       return;
     }
     if (!currentMonth || !/^\d{4}-\d{2}$/.test(currentMonth)) {
@@ -1174,7 +1362,7 @@ function App() {
       <h1 style={{ textAlign: 'center', margin: '20px 0 10px' }}>BEAKER 청담점 휴무 Scheduler</h1>
       <MyCalendar
         events={calendarEvents}
-        editable={isPreview}
+        editable={canEdit}
         onEventDrop={handleEventDrop}
         onEventClick={handleEventClick}
         eventContent={renderEventContent}
@@ -1182,13 +1370,23 @@ function App() {
         renderDayExtra={renderDayExtra}
       />
       <div style={{ height: "10px" }}></div>
+      {isPreview && (
+        <div style={{ textAlign: 'center', color: '#d35400', fontSize: '14px' }}>
+          {monthlySchedule.length > 0 ? '확정본을 수정 중입니다' : '생성된 휴무 미리보기입니다'} — '확정'을 눌러야 저장됩니다.
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '10px', marginBottom: '30px' }}>
         <button className="btn btn-secondary" onClick={genSch} disabled={!holidaysLoaded}>
           {holidaysLoaded ? ' 휴무 생성 ' : '공휴일 불러오는 중...'}
         </button>
-        <button className="btn" onClick={confirmGeneratedSchedule} disabled={isConfirming || generatedLeaves.length === 0}>
+        <button className="btn" onClick={confirmGeneratedSchedule} disabled={isConfirming || !isPreview}>
           {isConfirming ? '확정 중...' : '확정'}
         </button>
+        {isPreview && (
+          <button className="btn btn-secondary" onClick={discardDraft} disabled={isConfirming}>
+            수정 취소
+          </button>
+        )}
         <button className="btn btn-secondary" onClick={openSettings} title="설정">
           ⚙ 설정
         </button>
