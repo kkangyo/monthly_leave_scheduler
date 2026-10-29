@@ -10,6 +10,9 @@
     "stop:server": "bash ./scripts/stop-server.sh",
     "exit:all": "bash ./scripts/exit-all.sh",
     "bootstrap": "bash ./scripts/install-dependencies.sh",
+    "setup:native": "bash ./scripts/setup-native.sh",
+    "start:native": "bash ./scripts/start-native.sh",
+    "exit:native": "bash ./scripts/exit-native.sh",
     "start:windows": "cd ./server/app && tsc && docker-compose -f ./server/docker-compose.yml --env-file ./config/.server.env up -d && env-cmd -f ./config/.client.env npm start --prefix ./client/app"
   },
   "keywords": [],

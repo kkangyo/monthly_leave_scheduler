@@ -142,3 +142,5 @@ dist
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+# DB dump / old data dir backups
+.db/backup/
