@@ -374,24 +374,44 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
     })();
   }, []);
 
-  // 앱 시작 시 서버에 저장된 설정(보조직무 / 필수 근무 조건)을 불러와 적용
+  // 서버에 저장된 설정(보조직무 / 필수 근무 조건 / 점장 휴무 방식)을 불러와 적용.
+  //  값이 그대로면 기존 상태를 유지한다 — 새 배열로 바꾸면 아래 자동 저장(PUT)이 쓸데없이 돈다.
+  const loadAppSettings = async () => {
+    const keepIfSame = <T,>(next: T) => (prev: T) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+    try {
+      const result = await agentAPI.getSettings();
+      const s = result?.settings ?? {};
+      if (Array.isArray(s.subjob1)) setSelectedSubjob1(keepIfSame<string[]>(s.subjob1));
+      if (Array.isArray(s.subjob2)) setSelectedSubjob2(keepIfSame<string[]>(s.subjob2));
+      if (Array.isArray(s.essentialWork) && s.essentialWork.length >= 5)
+        setScheduleEssentialWork(keepIfSame<number[]>(s.essentialWork));
+      if (typeof s.directorFullQuota === "boolean") setDirectorFullQuota(s.directorFullQuota);
+    } catch (err) {
+      console.error("getSettings error", err);
+    } finally {
+      appSettingsLoadedRef.current = true;
+    }
+  };
+
+  // 앱 시작 시 설정 로드
   useEffect(() => {
-    (async () => {
-      try {
-        const result = await agentAPI.getSettings();
-        const s = result?.settings ?? {};
-        if (Array.isArray(s.subjob1)) setSelectedSubjob1(s.subjob1);
-        if (Array.isArray(s.subjob2)) setSelectedSubjob2(s.subjob2);
-        if (Array.isArray(s.essentialWork) && s.essentialWork.length >= 5)
-          setScheduleEssentialWork(s.essentialWork);
-        if (typeof s.directorFullQuota === "boolean") setDirectorFullQuota(s.directorFullQuota);
-      } catch (err) {
-        console.error("getSettings error", err);
-      } finally {
-        appSettingsLoadedRef.current = true;
-      }
-    })();
+    loadAppSettings();
   }, []);
+
+  // 다른 사람이 수정한 내용을 반영하기 위해 서버 값을 다시 받아온다(⚙ 설정 창을 열 때 호출).
+  //  직원 표·설정 값·해당 달(month) 확정본과 이전 달 확정본·누적 사용 연차. 화면 표의 저장 안 한 입력은 서버 값으로 바뀐다.
+  const refreshFromServer = async (month: string) => {
+    const tasks: Promise<unknown>[] = [syncAgentList(), loadAppSettings()];
+    if (/^\d{4}-\d{2}$/.test(month)) {
+      tasks.push(
+        fetchMonthlySchedule(month),
+        fetchPrevMonthSchedule(month),
+        fetchAnnualLeaveUsage(month),
+        fetchAnnualUsageBeforeMonth(month)
+      );
+    }
+    await Promise.all(tasks);
+  };
 
   // 보조직무 / 필수 근무 조건 / 점장 휴무 방식이 바뀌면 (최초 로드 이후) 디바운스 후 서버에 자동 저장
   useEffect(() => {
@@ -445,6 +465,7 @@ export const AgentProvider = ({ children }: { children: React.ReactNode }) => {
         resetMonthlyScheduleTable,
         setLeaveList,
         syncAgentList,
+        refreshFromServer,
         setSelectedDates,
         setSelectedAnnualleave,
         setSelectedMandatoryWork,

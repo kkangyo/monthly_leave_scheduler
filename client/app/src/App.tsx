@@ -52,6 +52,7 @@ function App() {
     resetMonthlyScheduleTable,
     holidays,
     holidaysLoaded,
+    refreshFromServer,
   } = useAgent();
 
   const [agentData, setAgentData] = useState<Agentinfo[]>([]);
@@ -75,9 +76,15 @@ function App() {
   // 설정 표에 저장 안 한 변경이 있는지 확인하는 함수 (Table 이 채워줌)
   const settingsDirtyCheckRef = useRef<(() => boolean) | null>(null);
 
-  // 설정 창은 항상 메인 달력의 달로 열린다
-  const openSettings = () => {
+  // 설정 창은 항상 메인 달력의 달로 열린다. 다른 사람이 그 사이 수정했을 수 있으니 열기 전에 서버 값을 다시 받는다
+  //  (실패해도 갖고 있던 값으로 연다)
+  const openSettings = async () => {
     setSettingsMonth(currentMonth);
+    try {
+      await refreshFromServer(currentMonth);
+    } catch (err) {
+      console.error("refreshFromServer error", err);
+    }
     setIsSettingsOpen(true);
   };
 
@@ -192,6 +199,11 @@ function App() {
       e.job_level === "점장" || e.job_level === "1층 부점장" || e.job_level === "2층 부점장"; // 점장·부점장
     const isPureManager = (e: Agentinfo) => e.job_level === "1층 매니저" || e.job_level === "2층 매니저";
     const isSenior = (e: Agentinfo) => isTopAdmin(e) || isPureManager(e); // 책임급 (점장·매니저·부점장)
+    // 관리자 = 점장 + 부점장. 매장에 부점장이 한 명도 없으면 매니저가 관리자 업무를 맡으므로 점장 + 매니저.
+    //  관리자 중 최소 1명은 매일 근무해야 한다(절대 조건, checkConditionToLeave 의 dutyClash).
+    //  예: 부점장 없음 + 매니저 1명 → 점장과 그 매니저는 같은 날 못 쉼 / 매니저 2명 이상 → 한 명만 남으면 겹쳐도 됨
+    const hasViceDirector = agentData.some((e) => e.job_level.includes("부점장"));
+    const isAdmin = (e: Agentinfo) => isDirector(e) || (hasViceDirector ? isTopAdmin(e) : isPureManager(e));
     // 직급순 방식에서 먼저 배정하는 간부 (점장·부점장·매니저·대리) 와 그 순서 (작을수록 먼저)
     const isOfficer = (e: Agentinfo) => isSenior(e) || e.job_level.includes("대리");
     const officerRank = (e: Agentinfo): number =>
@@ -370,9 +382,31 @@ function App() {
         lastLeaveDay[emp.name] = prevLastLeave[emp.name] ?? -minWorkGap;
       });
 
+      // 매일 최소 1명은 근무해야 하는 조: 보조직무(온라인·RT) 각 조 + 관리자(isAdmin).
+      //  member 가 속한 조의 다른 인원이 그 날 전부 쉬고 있으면 true — member 까지 쉬면 그 업무 담당자가 없다.
+      //  (조에 이름이 한 명뿐이면 겹칠 상대가 없으므로 false)
+      //  우선순위: 관리자 조 > 4일 초과 연속 근무 금지 > 보조직무 조. 그래서 보조직무 조만 allowSubjobClash 로 풀 수 있다
+      //  (5-1c 에서 다른 방법으로 연속 근무를 못 풀 때만 켬).
+      const subjobGroups: string[][] = [selectedSubjob1, selectedSubjob2].map((g) => (g as string[]).filter((n) => !!n));
+      const adminGroup: string[] = agentData.filter(isAdmin).map((e) => e.name);
+      const dutyGroups: string[][] = [...subjobGroups, adminGroup];
+      let allowSubjobClash = false;
+      const groupClash = (groups: string[][], name: string, date: string): boolean =>
+        groups.some((g) => {
+          if (!g.includes(name)) return false;
+          const others = g.filter((n) => n !== name && !!employeeleaveSchedule[n]);
+          return (
+            others.length > 0 &&
+            others.every((n) => employeeleaveSchedule[n].includes(date) || (offDutyEmployees[date] || []).includes(n))
+          );
+        });
+      const dutyClash = (name: string, date: string): boolean =>
+        groupClash(allowSubjobClash ? [adminGroup] : dutyGroups, name, date);
+
       // member 를 그 날 쉬게 했을 때 남는 근무 인원이 매장 운영 조건을 만족하는지 검사.
-      //  유일한 절대 조건 = 인원별 의무 휴일. 그 외는 최대한만 맞춘다.
-      //  strict = true  : 일반 조건 (층·책임급·리드 최소 + 점장·부점장 1명 + subjob 겹침 방지 + 목표 근무 인원)
+      //  절대 조건 = 인원별 의무 휴일 + 보조직무 같은 조·관리자 동시 휴무 금지(사전 확정 휴무끼리 겹친 경우는 어쩔 수 없음).
+      //  그 외는 최대한만 맞춘다.
+      //  strict = true  : 일반 조건 (층·책임급·리드 최소 + 목표 근무 인원)
       //  strict = false : 예외(채우기·막판·강제휴무) - "최소 근무 인원(목표 - 1, 주말은 +1 이 목표에 반영됨)" 만 확인
       const checkConditionToLeave = (
         date: string,
@@ -384,6 +418,11 @@ function App() {
         const temp = dailyWorkforce.filter((emp) => !offDutyEmployees[date].includes(emp.name));
         const minHeadcount = workTargetOf(day) - 1; // 완화 시 최소 근무 인원 (평일 목표-1 / 주말 목표-1)
 
+        // ── 보조직무 같은 조·관리자 동시 휴무 금지: 강제휴무·완화 단계 포함 모든 단계에서 절대 조건 ──
+        //  (막혀서 생기는 5일 이상 연속 근무는 5-1·5-1b·5-1c 가 다른 날/앞쪽 휴무 재배치로 푼다.
+        //   그래도 안 풀리면 5-1c 마지막에 보조직무 조만 예외 허용 — 관리자 조는 끝까지 절대 조건)
+        if (dutyClash(member.name, date)) return false;
+
         // ── 4일 연속 근무 초과자 강제 휴무 / 완화 단계: 최소 근무 인원만 ──
         const forcedRest =
           (lastLeaveDay[member.name] > 0 || hasPrevHistory(member.name)) &&
@@ -391,16 +430,10 @@ function App() {
         if (forcedRest || !strict) return temp.length >= minHeadcount;
 
         // ── 일반(strict) 조건 ──
-        const topAdmin = temp.filter(isTopAdmin).length;       // 점장·부점장
         const seniors = temp.filter(isSenior).length;          // 책임급 (매니저 포함)
-        const subjob1Left = temp.filter((emp) => selectedSubjob1.includes(emp.name)).length;
-        const subjob2Left = temp.filter((emp) => selectedSubjob2.includes(emp.name)).length;
 
         if (!floorCoverageOk(temp)) return false;              // 층별 최소 인원·리드 (점장 유동 배치 반영)
         if (seniors < minSeniors) return false;                // 책임급 최소
-        if (topAdmin < 1) return false;                        // 점장 또는 부점장 최소 1명
-        if (selectedSubjob1.includes(member.name) && subjob1Left < 1) return false; // 동일 subjob 겹침 방지
-        if (selectedSubjob2.includes(member.name) && subjob2Left < 1) return false;
         if (temp.length < workTargetOf(day)) return false;     // 목표 근무 인원 (평일/주말)
 
         return true;
@@ -898,6 +931,209 @@ function App() {
         }
       });
 
+      //#################### 5-1c. 그래도 남은 5일 이상 연속 근무 → 그 인원의 알고리즘 휴무 '전체' 재배치
+      //  5-1b 는 휴무 하나만 옮기기 때문에, 끊어야 할 유일한 날이 막혀 있으면(예: 15일 휴무 ~ 25일 신청 휴무 사이에서
+      //  양쪽을 4일 이하로 나누는 20일에 같은 조 인원이 신청 휴무) 앞쪽 휴무들을 같이 밀어야(15→16, 11→12 …)
+      //  풀리는 경우를 못 푼다. 그래서 다른 인원 스케줄은 고정하고, 이 인원의 옮길 수 있는 휴무(사전 확정·공휴일 제외)
+      //  개수는 그대로 둔 채 날짜 배치를 DP 로 통째로 다시 구한다.
+      //  비용 = 4일 초과 연속 근무(×1000) + 휴무 사이 근무 2일 미만(×40) + 원래 자리에서 옮긴 휴무(×30)
+      //       + 그 날 다른 휴무 인원(×5) (+ 직급순 방식 간부 겹침 ×200). 4일 초과 연속 근무 총량이 실제로 줄 때만 반영.
+      //  휴무를 새로 놓을 수 있는 날 = 필수 근무일 아님 + 완화 조건 통과(최소 근무 인원 + 보조직무 겹침 금지).
+      const dayNumOf = (d: string) => parseInt(d.split("-")[2], 10);
+      //  forbid    : 이 날들엔 휴무를 두지 않는다(같은 조 상대에게 날을 비워줄 때)
+      //  allowEqual: 4일 초과 연속 근무가 늘지만 않으면 반영(상대에게 날을 비워주는 쪽은 줄어들 필요가 없음)
+      //  relaxSubjob: 보조직무 같은 조 동시 휴무를 허용(그런 날은 ×500 — 4일 초과 연속 근무 하루(×1000)를 줄일 때만 쓰임)
+      //  반환값: 실제로 바뀌었으면 true
+      const replanLeaves = (emp: Agentinfo, forbid?: Set<number>, allowEqual = false, relaxSubjob = false): boolean => {
+        const name = emp.name;
+        const current = employeeleaveSchedule[name];
+        const currentOver = overStreak(name, current);
+        if (currentOver === 0 && !allowEqual) return false;
+        const isMovable = (d: string) => !presetDateSet.has(`${name}|${d}`) && !alteroffday.includes(dayNumOf(d));
+        const movable = new Set(current.filter(isMovable).map(dayNumOf));
+        const K = movable.size;
+        if (K === 0) return false;
+        const fixedDates = current.filter((d) => !isMovable(d));
+        const fixedOff = new Set<number>([...fixedDates.map(dayNumOf), ...offday]);
+
+        // 휴무를 놓을 수 있는 날과 그 날에 놓는 비용
+        const placeCost: { [day: number]: number } = {};
+        for (let day = 1; day <= daysInMonth; day++) {
+          if (fixedOff.has(day) || alteroffday.includes(day) || forbid?.has(day)) continue;
+          const date = dateOf(day);
+          const cost =
+            (offDutyEmployees[date] || []).filter((n) => n !== name).length * 5 +
+            (movable.has(day) ? 0 : 30) +
+            officerClash(emp, date) * 200 +
+            (relaxSubjob && groupClash(subjobGroups, name, date) ? 500 : 0);
+          if (movable.has(day)) {
+            placeCost[day] = cost;
+            continue;
+          }
+          if (isMandatoryWork(name, date)) continue;
+          employeeleaveSchedule[name] = [...current, date];
+          const dw = agentData.filter((e) => !employeeleaveSchedule[e.name].includes(date));
+          if (!offDutyEmployees[date]) offDutyEmployees[date] = [];
+          offDutyEmployees[date].push(name);
+          allowSubjobClash = relaxSubjob;
+          const ok = checkConditionToLeave(date, dw, emp, false);
+          allowSubjobClash = false;
+          offDutyEmployees[date].pop();
+          employeeleaveSchedule[name] = current;
+          if (ok) placeCost[day] = cost;
+        }
+
+        // 연속 근무 구간 비용 (월초·월말 경계 구간은 '간격 좁음' 벌점 없음).
+        //  len² ×2 는 같은 조건이면 구간을 고르게 나누는 쪽(예: 23~31 사이면 26 보다 27)을 고르게 한다.
+        const segCost = (len: number, boundary: boolean) =>
+          Math.max(0, len - (maxWorkGap - 1)) * 1000 + (!boundary && len < minWorkGap - 1 ? 40 : 0) + len * len * 2;
+
+        // dp[k * L + (last - start)] = 지금까지 k 개를 놓고 마지막 휴무가 last 일 때 최소 비용
+        const start = prevLastLeave[name] ?? 0;
+        const L = daysInMonth + 1 - start;
+        const startIsBoundary = !hasPrevHistory(name);
+        let dp: number[] = new Array((K + 1) * L).fill(Infinity);
+        dp[0] = 0;
+        const back: Int32Array[] = []; // back[day-1][k] = last=day 상태로 온 이전 last 인덱스
+        for (let day = 1; day <= daysInMonth; day++) {
+          const li = day - start;
+          const forced = fixedOff.has(day);
+          const place = placeCost[day];
+          const nd = forced ? new Array((K + 1) * L).fill(Infinity) : dp.slice(); // 고정 휴무일은 '근무' 선택 불가
+          const bk = new Int32Array(K + 1).fill(-1);
+          if (forced || place !== undefined) {
+            for (let k = 0; k <= K; k++) {
+              const nk = forced ? k : k + 1;
+              if (nk > K) continue;
+              for (let pi = 0; pi < li; pi++) {
+                const v = dp[k * L + pi];
+                if (v === Infinity) continue;
+                const c = v + segCost(li - pi - 1, pi === 0 && startIsBoundary) + (forced ? 0 : place);
+                if (c < nd[nk * L + li]) {
+                  nd[nk * L + li] = c;
+                  bk[nk] = pi;
+                }
+              }
+            }
+          }
+          back.push(bk);
+          dp = nd;
+        }
+        let best = Infinity;
+        let cur = -1;
+        for (let pi = 0; pi < L; pi++) {
+          const v = dp[K * L + pi];
+          if (v === Infinity) continue;
+          const c = v + segCost(daysInMonth - (pi + start), true);
+          if (c < best) {
+            best = c;
+            cur = pi;
+          }
+        }
+        if (cur < 0) return false;
+
+        const chosen: number[] = [];
+        for (let day = daysInMonth, k = K; day >= 1 && cur > 0; day--) {
+          if (cur !== day - start) continue;
+          const pi = back[day - 1][k];
+          if (!fixedOff.has(day)) {
+            chosen.push(day);
+            k -= 1;
+          }
+          cur = pi;
+        }
+        if (chosen.length !== K) return false;
+        const nextDates = [...fixedDates, ...chosen.map(dateOf)];
+        const nextOver = overStreak(name, nextDates);
+        if (allowEqual ? nextOver > currentOver : nextOver >= currentOver) return false;
+
+        // 반영: 빠진 날 → 새로 들어간 날로 이동 (총 휴무 일수 그대로)
+        const removed = [...movable].filter((d) => !chosen.includes(d));
+        const added = chosen.filter((d) => !movable.has(d));
+        if (removed.length === 0) return false;
+        employeeleaveSchedule[name] = nextDates;
+        removed.forEach((fromDay, i) => {
+          const fromDate = dateOf(fromDay);
+          const toDay = added[i];
+          const toDate = dateOf(toDay);
+          offDutyEmployees[fromDate] = (offDutyEmployees[fromDate] || []).filter((n) => n !== name);
+          if (!offDutyEmployees[toDate]) offDutyEmployees[toDate] = [];
+          offDutyEmployees[toDate].push(name);
+          const rec = allLeaves.find((l) => l.name === name && l.date === fromDate);
+          if (rec) {
+            rec.date = toDate;
+            rec.day = toDay;
+          }
+        });
+        lastLeaveDay[name] = Math.max(...nextDates.map(dayNumOf));
+        return true;
+      };
+
+      // 혼자 재배치로 안 풀리면, 긴 연속 근무 구간 안에서 같은 조(보조직무 조·관리자) 상대의 알고리즘 휴무 때문에 막힌 날을
+      //  상대가 비워주게(상대도 4일 초과 연속 근무가 늘지 않는 선에서 재배치) 한 뒤 다시 시도. 그래도 안 줄면 되돌린다.
+      //  예: 천문주 23일 휴무 뒤 24~28 중 쉴 수 있는 날이 24일뿐인데 반효진 알고리즘 휴무가 24일 → 반효진 24→21 로 비켜줌
+      const replanWithMate = (emp: Agentinfo) => {
+        const name = emp.name;
+        const start = prevLastLeave[name] ?? 0;
+        const marks = [start, ...leaveDayNums(name), ...offday].sort((a, b) => a - b).concat(daysInMonth + 1);
+        const longDays: number[] = [];
+        for (let k = 0; k < marks.length - 1; k++) {
+          if (marks[k + 1] - marks[k] - 1 < maxWorkGap) continue;
+          for (let d = Math.max(1, marks[k] + 1); d < marks[k + 1]; d++) longDays.push(d);
+        }
+        // 비켜줄 상대와 그 상대가 비워야 할 날(긴 구간 안의 상대 알고리즘 휴무)
+        const helpers: { mate: Agentinfo; forbid: Set<number> }[] = [];
+        dutyGroups
+          .filter((g) => g.includes(name))
+          .flat()
+          .filter((n, i, arr) => n !== name && arr.indexOf(n) === i)
+          .forEach((mateName) => {
+            const mate = agentData.find((e) => e.name === mateName);
+            if (!mate || directorExempt(mate)) return;
+            const forbid = new Set(
+              longDays.filter((d) => {
+                const date = dateOf(d);
+                return employeeleaveSchedule[mateName].includes(date) && !presetDateSet.has(`${mateName}|${date}`);
+              })
+            );
+            if (forbid.size > 0) helpers.push({ mate, forbid });
+          });
+
+        // 상대 한 명씩 → 안 되면 전원 동시에(예: 관리자 조 매니저와 RT 조 상대가 같은 날을 함께 비워야 하는 경우)
+        const trials = helpers.map((h) => [h]);
+        if (helpers.length > 1) trials.push(helpers);
+        for (const trial of trials) {
+          // 실패 시 되돌리기용 스냅샷
+          const names = [name, ...trial.map((h) => h.mate.name)];
+          const savedSchedule = Object.fromEntries(names.map((n) => [n, employeeleaveSchedule[n]]));
+          const savedLast = Object.fromEntries(names.map((n) => [n, lastLeaveDay[n]]));
+          const savedOff = Object.fromEntries(Object.entries(offDutyEmployees).map(([d, ns]) => [d, [...ns]]));
+          const savedLeaves = allLeaves.map((l) => ({ ...l }));
+          let changed = false;
+          trial.forEach((h) => { if (replanLeaves(h.mate, h.forbid, true)) changed = true; });
+          if (changed && replanLeaves(emp)) return;
+          Object.assign(employeeleaveSchedule, savedSchedule);
+          Object.keys(offDutyEmployees).forEach((d) => { offDutyEmployees[d] = savedOff[d] || []; });
+          allLeaves.splice(0, allLeaves.length, ...savedLeaves);
+          Object.assign(lastLeaveDay, savedLast);
+        }
+      };
+
+      // 한 사람을 옮기면 같은 조 상대의 막힌 날이 풀릴 수 있어 두 번 돈다
+      for (let pass = 0; pass < 2; pass++) {
+        agentData.forEach((emp) => {
+          if (directorExempt(emp)) return;
+          replanLeaves(emp);
+          if (overStreak(emp.name, employeeleaveSchedule[emp.name]) > 0) replanWithMate(emp);
+        });
+      }
+      // 그래도 남은 4일 초과 연속 근무 → 보조직무 조 겹침만 예외로 허용하고 다시 배치 (관리자 조는 그대로 절대 조건)
+      //  예: 천문주 24~30 — 24·29·30 은 점장 신청 휴무(관리자), 25~28 은 반효진 신청 휴무(RT) → RT 를 양보해 27일 휴무
+      agentData.forEach((emp) => {
+        if (directorExempt(emp)) return;
+        if (overStreak(emp.name, employeeleaveSchedule[emp.name]) > 0) replanLeaves(emp, undefined, false, true);
+      });
+
       //#################### 5-2. 하루 휴무 인원 재분배 (많이 쉬는 날 → 적게 쉬는 날, 평일/주말 그룹 내에서만)
       //  여기까지의 단계들은 "각자의 이번 달 의무 휴무 총량(leaveCounter)"을 채우는 데만 신경 써서,
       //  그 과정에서 같은 평일이라도 어떤 날은 3명이 쉬고 어떤 날은 1명만 쉬는 식의 불균형이 생길 수
@@ -988,6 +1224,105 @@ function App() {
       rebalanceGroup(weekdayDays);
       rebalanceGroup(weekendDays);
 
+      //#################### 5-3. 전체 날짜 휴무 인원 균등화 (사전 휴무 포함 하루 총 휴무 인원의 최대-최소 ≤ 1 목표)
+      //  5-2 는 평일/주말 그룹 안에서만, 최소 근무 간격 3일을 지키는 이동만 해서 막히는 경우가 많았다.
+      //  여기서는 모든 영업일을 한데 놓고 '하루 휴무 인원 제곱합'이 줄어드는 이동(많은 날 → 2명 이상 적은 날)을
+      //  찾는다. (막혔을 때 손해 없는 이동으로 길을 여는 방식도 시험했지만 best-of-60 에선 효과가 없고 생성 시간만 2배라 뺐다)
+      //  이동 조건(절대): 사전 확정 휴무·공휴일·필수 근무일은 건드리지 않음 / 보조직무 조·관리자 겹침 금지 /
+      //  최소 근무 인원(목표-1) / 4일 초과 연속 근무가 늘지 않음 / 도착일의 층·책임급·목표 인원 조건이 나빠지지 않음.
+      //  간격 선호(휴무 사이 근무 0일 ×80, 1일 ×40)는 균등화 이득(제곱합 1 감소당 ×50)과 저울질한다.
+      {
+        const balanceDays: number[] = [];
+        for (let day = 1; day <= daysInMonth; day++) {
+          if (!offday.includes(day) && !alteroffday.includes(day)) balanceDays.push(day);
+        }
+        const offCountOf = (day: number) =>
+          agentData.filter((e) => employeeleaveSchedule[e.name].includes(dateOf(day))).length;
+        // 개인 간격 비용: 4일 초과 연속 근무(×1000) + 휴무 사이 근무가 너무 짧은 구간(월초·월말 경계 제외)
+        const personalCost = (name: string, dates: string[]): number => {
+          const segs = streaksOf(name, dates);
+          return segs.reduce((sum, len, i) => {
+            const boundary = (i === 0 && !hasPrevHistory(name)) || i === segs.length - 1;
+            const over = Math.max(0, len - (maxWorkGap - 1)) * 1000;
+            const short = boundary ? 0 : len === 0 ? 80 : len === 1 ? 40 : 0;
+            return sum + over + short;
+          }, 0);
+        };
+        // 그 날 근무 인원 기준 일반 조건 위반 수 (층 커버리지·책임급·목표 근무 인원)
+        const dayViolations = (day: number, working: Agentinfo[]): number =>
+          Number(!floorCoverageOk(working)) +
+          Number(working.filter(isSenior).length < minSeniors) +
+          Number(working.length < workTargetOf(day));
+        const workingOn = (day: number, extraOff?: string) =>
+          agentData.filter((e) => e.name !== extraOff && !employeeleaveSchedule[e.name].includes(dateOf(day)));
+
+        // name 의 휴무를 fromDay → toDay 로 옮길 때 비용 변화(음수면 이득). 불가능하면 null
+        const SQ_WEIGHT = 50;
+        const moveDelta = (emp: Agentinfo, fromDay: number, toDay: number, cFrom: number, cTo: number): number | null => {
+          const name = emp.name;
+          const fromDate = dateOf(fromDay);
+          const toDate = dateOf(toDay);
+          const current = employeeleaveSchedule[name];
+          if (current.includes(toDate) || isMandatoryWork(name, toDate)) return null;
+          if (dutyClash(name, toDate)) return null;
+          const workingTo = workingOn(toDay);
+          const afterTo = workingTo.filter((e) => e.name !== name);
+          if (afterTo.length < workTargetOf(toDay) - 1) return null;
+          if (dayViolations(toDay, afterTo) > dayViolations(toDay, workingTo)) return null;
+          const next = [...current.filter((d) => d !== fromDate), toDate];
+          if (overStreak(name, next) > overStreak(name, current)) return null;
+          const sqGain = 2 * (cFrom - cTo) - 2; // (cFrom² + cTo²) - ((cFrom-1)² + (cTo+1)²)
+          return personalCost(name, next) - personalCost(name, current) - SQ_WEIGHT * sqGain;
+        };
+        const applyMove = (name: string, fromDay: number, toDay: number) => {
+          const fromDate = dateOf(fromDay);
+          const toDate = dateOf(toDay);
+          employeeleaveSchedule[name] = [...employeeleaveSchedule[name].filter((d) => d !== fromDate), toDate];
+          offDutyEmployees[fromDate] = (offDutyEmployees[fromDate] || []).filter((n) => n !== name);
+          if (!offDutyEmployees[toDate]) offDutyEmployees[toDate] = [];
+          offDutyEmployees[toDate].push(name);
+          const rec = allLeaves.find((l) => l.name === name && l.date === fromDate);
+          if (rec) {
+            rec.date = toDate;
+            rec.day = toDay;
+          }
+        };
+        // 제곱합이 실제로 줄어드는 이동(휴무 인원 2명 이상 차이) 중 가장 이득이 큰 것
+        const findMove = (): { name: string; fromDay: number; toDay: number } | null => {
+          const counts = new Map(balanceDays.map((d) => [d, offCountOf(d)]));
+          let best: { name: string; fromDay: number; toDay: number } | null = null;
+          let bestDelta = 0;
+          for (const fromDay of balanceDays) {
+            const cFrom = counts.get(fromDay)!;
+            const fromDate = dateOf(fromDay);
+            const movers = agentData.filter(
+              (e) =>
+                !directorExempt(e) &&
+                employeeleaveSchedule[e.name].includes(fromDate) &&
+                !presetDateSet.has(`${e.name}|${fromDate}`)
+            );
+            for (const toDay of balanceDays) {
+              const cTo = counts.get(toDay)!;
+              if (cFrom - cTo < 2) continue;
+              for (const emp of movers) {
+                const delta = moveDelta(emp, fromDay, toDay, cFrom, cTo);
+                if (delta !== null && delta < bestDelta) {
+                  bestDelta = delta;
+                  best = { name: emp.name, fromDay, toDay };
+                }
+              }
+            }
+          }
+          return best;
+        };
+
+        for (let guard = 0; guard < 300; guard++) {
+          const move = findMove();
+          if (!move) break;
+          applyMove(move.name, move.fromDay, move.toDay);
+        }
+      }
+
       return { employeeleaveSchedule, leaveCounter, lastLeaveDay, offDutyEmployees, allLeaves };
     };
 
@@ -1021,14 +1356,16 @@ function App() {
         if (working.length < target - 1) penalty += (target - 1 - working.length) * 600;     // 최소 근무 인원 (목표-1) 미달 (hard)
         const seniors = working.filter(isSenior).length;
         if (seniors < minSeniors) penalty += (minSeniors - seniors) * 500;
-        if (working.filter(isTopAdmin).length < 1) penalty += 400;                     // 점장·부점장 부재
+        if (agentData.some(isAdmin) && !working.some(isAdmin)) penalty += 1000;      // 관리자 부재 (절대 조건, 사전 휴무끼리 겹친 날만 남음)
         if (!floorCoverageOk(working)) penalty += 500;                                 // 층별 최소 인원·리드 (점장 유동 반영)
 
-        // 동일 subjob 조 인원이 같은 날 모두 휴무면 벌점
+        // 동일 subjob 조 인원이 같은 날 모두 휴무면 벌점. 배정 단계에서 막으므로 남는 건 사전 확정 휴무끼리 겹친 날과
+        //  5-1c 가 연속 근무를 풀려고 예외로 허용한 날뿐. 우선순위(관리자 > 연속 근무 > 보조직무)에 맞춰
+        //  5일 이상 연속 근무 하루(×300)보다 약하게 본다.
         const sub1Named: string[] = (selectedSubjob1 as string[]).filter((n) => !!n);
         const sub2Named: string[] = (selectedSubjob2 as string[]).filter((n) => !!n);
-        if (sub1Named.length > 0 && !working.some((w) => sub1Named.includes(w.name))) penalty += 150;
-        if (sub2Named.length > 0 && !working.some((w) => sub2Named.includes(w.name))) penalty += 150;
+        if (sub1Named.length > 0 && !working.some((w) => sub1Named.includes(w.name))) penalty += 200;
+        if (sub2Named.length > 0 && !working.some((w) => sub2Named.includes(w.name))) penalty += 200;
       }
 
       // (3) 하루 휴무 인원 균등 분포 (분산이 작을수록 좋음)
@@ -1036,6 +1373,8 @@ function App() {
         const mean = offCounts.reduce((a, b) => a + b, 0) / offCounts.length;
         const variance = offCounts.reduce((a, b) => a + (b - mean) ** 2, 0) / offCounts.length;
         penalty += variance * 45;
+        // 전체 날짜 하루 휴무 인원(사전 휴무 포함) 최대-최소 차이: 1명까지는 정상, 그 이상은 1명당 ×300
+        penalty += Math.max(0, Math.max(...offCounts) - Math.min(...offCounts) - 1) * 300;
       }
 
       // (3-1) 알고리즘이 만든 몰림: 평일끼리·주말끼리, '그룹 최소 휴무 인원 + 1' 을 넘는 날의 초과 인원.

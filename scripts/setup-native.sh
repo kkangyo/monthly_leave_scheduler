@@ -38,6 +38,9 @@ apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   curl ca-certificates xz-utils libaio1 libnuma1
 
+# start-native.sh 는 sudo 없이 실행하므로 MySQL 은 sudo 를 호출한 일반 사용자 권한으로 돌린다
+RUN_USER="${SUDO_USER:-root}"
+
 mkdir -p "$NATIVE_DIR/downloads" "$NATIVE_DIR/run" "$NATIVE_DIR/log"
 
 echo "==> Node v$NODE_VERSION"
@@ -72,7 +75,7 @@ fi
 # 문자셋/타임존은 Docker 와 같은 server/.db/etc/mysqld.cnf 를 include
 cat >"$MYSQL_CNF" <<EOF
 [mysqld]
-user=root
+user=$RUN_USER
 basedir=$MYSQL_BASE
 datadir=$MYSQL_DATA
 socket=$MYSQL_SOCK
@@ -97,6 +100,10 @@ sql_escape() {
 }
 DB_USER_SQL="$(sql_escape "$DB_USER")"
 DB_PSWORD_SQL="$(sql_escape "$DB_PSWORD")"
+
+# 예전에 root 로 만들어진 데이터/소켓/로그도 RUN_USER 소유로 맞춘다
+mkdir -p "$MYSQL_DATA"
+chown -R "$RUN_USER": "$MYSQL_DATA" "$NATIVE_DIR/run" "$NATIVE_DIR/log"
 
 if [ ! -d "$MYSQL_DATA/mysql" ]; then
   echo "==> MySQL 데이터 디렉터리 초기화"
